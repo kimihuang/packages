@@ -1,0 +1,17 @@
+slt_test_cmd_start:$$
+slt_test_cmd_end:^^
+slt_result_start:$&
+slt_result_end:^^
+slt_log_start:$@
+slt_log_end:^^
+
+slt_test_name: ACPU_TEST_0001
+
+param:
+-v: verbose, 打印执行的详细信息
+-c: 指定shell cmd执行
+-p: 匹配 shell cmd执行日志的pattern
+-t: 指定测试超时时间 单位 ms
+
+slt cmd example:
+ACPU_TEST_0001 -v-c "echo hello world" -p "hello world" -t 1000

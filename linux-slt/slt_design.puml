@@ -1,0 +1,254 @@
+@startuml
+' SLT (System Level Test) 下位机系统类图设计
+' 设计原则：高内聚、低耦合、易于扩展
+
+title SLT下位机系统类图设计
+
+skinparam class {
+    BackgroundColor<<Interface>> LightYellow
+    BackgroundColor<<Abstract>> LightGray
+    BackgroundColor<<Concrete>> White
+    ArrowColor #444444
+    BorderColor #444444
+}
+
+' ================== 核心接口定义 ==================
+interface CommandParser <<Interface>> {
+  + parseCommand(rawData: string): TestCommand
+  + validateCommand(command: TestCommand): bool
+}
+
+interface SerialPortHandler <<Interface>> {
+  + open(portName: string, baudRate: int): bool
+  + readData(timeoutMs: int): string
+  + writeData(data: string): bool
+  + close(): void
+}
+
+interface CommandExecutor <<Interface>> {
+  + execute(command: TestCommand): ExecutionResult
+  + isExecuting(): bool
+  + cancelExecution(): bool
+}
+
+interface LogProcessor <<Interface>> {
+  + collectLogs(commandId: string, timeoutMs: int): string
+  + matchPattern(logText: string, pattern: string): MatchResult
+  + saveLogs(commandId: string, logData: string): bool
+}
+
+' ================== 数据模型类 ==================
+class TestCommand {
+  - id: string
+  - name: string
+  - shellCommand: string
+  - pattern: string
+  - timeoutMs: int
+  - verbose: bool
+  - parameters: map<string, string>
+  + getId(): string
+  + getName(): string
+  + getShellCommand(): string
+  + getPattern(): string
+  + getTimeout(): int
+  + isVerbose(): bool
+  + getParameter(key: string): string
+}
+
+class ExecutionResult {
+  - commandId: string
+  - exitCode: int
+  - output: string
+  - errorMessage: string
+  - executionTimeMs: int
+  - patternMatchResult: bool
+  + getCommandId(): string
+  + getExitCode(): int
+  + getOutput(): string
+  + getErrorMessage(): string
+  + getExecutionTime(): int
+  + isPatternMatched(): bool
+}
+
+class MatchResult {
+  - matched: bool
+  - matchCount: int
+  - matchedText: string
+  - position: int
+  + isMatched(): bool
+  + getMatchCount(): int
+  + getMatchedText(): string
+  + getPosition(): int
+}
+
+' ================== 具体实现类 ==================
+class SLTCommandParser {
+  - commandStartMarker: string
+  - commandEndMarker: string
+  - resultStartMarker: string
+  - resultEndMarker: string
+  - logStartMarker: string
+  - logEndMarker: string
+  + parseCommand(rawData: string): TestCommand
+  + validateCommand(command: TestCommand): bool
+  - extractParameters(cmdLine: string): map<string, string>
+  - parseTestName(cmdLine: string): string
+}
+
+class LinuxSerialPortHandler {
+  - portFd: int
+  - portName: string
+  - baudRate: int
+  + open(portName: string, baudRate: int): bool
+  + readData(timeoutMs: int): string
+  + writeData(data: string): bool
+  + close(): void
+  - configureSerialPort(): bool
+  - readWithTimeout(timeoutMs: int): string
+}
+
+class SystemCommandExecutor {
+  - isRunning: bool
+  - currentPid: int
+  + execute(command: TestCommand): ExecutionResult
+  + isExecuting(): bool
+  + cancelExecution(): bool
+  - executeShellCommand(cmd: string, timeoutMs: int): tuple<int, string>
+  - killProcess(pid: int): bool
+}
+
+class PatternLogProcessor {
+  - logDirectory: string
+  - maxLogSize: int
+  + collectLogs(commandId: string, timeoutMs: int): string
+  + matchPattern(logText: string, pattern: string): MatchResult
+  + saveLogs(commandId: string, logData: string): bool
+  - readLogFile(commandId: string): string
+  - writeLogFile(commandId: string, data: string): bool
+  - patternSearch(text: string, pattern: string): MatchResult
+}
+
+' ================== 核心控制器类 ==================
+class SLTController {
+  - serialHandler: SerialPortHandler
+  - commandParser: CommandParser
+  - commandExecutor: CommandExecutor
+  - logProcessor: LogProcessor
+  - isRunning: bool
+  + start(): void
+  + stop(): void
+  + processNextCommand(): ExecutionResult
+  + getStatus(): ControllerStatus
+  - initializeComponents(): bool
+  - cleanup(): void
+  - sendResult(result: ExecutionResult): bool
+}
+
+class ControllerStatus {
+  - isRunning: bool
+  - commandsProcessed: int
+  - lastError: string
+  - startTime: datetime
+  + isRunning(): bool
+  + getCommandsProcessed(): int
+  + getLastError(): string
+  + getUptime(): int
+}
+
+' ================== 工厂类 ==================
+class ComponentFactory {
+  + createSerialPortHandler(): SerialPortHandler
+  + createCommandParser(): CommandParser
+  + createCommandExecutor(): CommandExecutor
+  + createLogProcessor(): LogProcessor
+  + createController(): SLTController
+}
+
+' ================== 配置类 ==================
+class SLTConfig {
+  - serialPort: string
+  - baudRate: int
+  - logDirectory: string
+  - defaultTimeout: int
+  - maxCommandSize: int
+  + getSerialPort(): string
+  + getBaudRate(): int
+  + getLogDirectory(): string
+  + getDefaultTimeout(): int
+  + getMaxCommandSize(): int
+  + loadFromFile(configPath: string): bool
+  + saveToFile(configPath: string): bool
+}
+
+' ================== 关系定义 ==================
+
+' 接口实现关系
+SLTCommandParser ..|> CommandParser
+LinuxSerialPortHandler ..|> SerialPortHandler
+SystemCommandExecutor ..|> CommandExecutor
+PatternLogProcessor ..|> LogProcessor
+
+' 组合关系
+SLTController o-- SerialPortHandler
+SLTController o-- CommandParser
+SLTController o-- CommandExecutor
+SLTController o-- LogProcessor
+
+SLTController o-- ControllerStatus
+
+' 依赖关系
+SLTCommandParser --> TestCommand
+SystemCommandExecutor --> TestCommand
+SystemCommandExecutor --> ExecutionResult
+PatternLogProcessor --> MatchResult
+
+' 工厂创建关系
+ComponentFactory --> SLTController
+ComponentFactory --> LinuxSerialPortHandler
+ComponentFactory --> SLTCommandParser
+ComponentFactory --> SystemCommandExecutor
+ComponentFactory --> PatternLogProcessor
+
+' 配置依赖
+SLTController --> SLTConfig
+LinuxSerialPortHandler --> SLTConfig
+PatternLogProcessor --> SLTConfig
+
+' ================== 注释说明 ==================
+note top of SLTController
+  核心控制器，负责协调各个组件：
+  1. 从串口读取数据
+  2. 解析命令
+  3. 执行Shell命令
+  4. 处理日志匹配
+  5. 返回结果
+end note
+
+note right of TestCommand
+  命令数据模型：
+  - id: 唯一标识符
+  - name: 测试名称(如ACPU_TEST_0001)
+  - shellCommand: 要执行的Shell命令
+  - pattern: 日志匹配模式
+  - timeoutMs: 超时时间(毫秒)
+  - verbose: 是否详细输出
+end note
+
+note left of SLTCommandParser
+  命令解析器，支持格式：
+  slt_test_cmd_start:$$
+  slt_test_cmd_end:^^
+  slt_result_start:$&
+  slt_result_end:^^
+  示例：ACPU_TEST_0001 -v-c "echo hello" -p "hello" -t 1000
+end note
+
+note bottom of SystemCommandExecutor
+  Shell命令执行器：
+  1. 使用system()执行命令
+  2. 支持超时控制
+  3. 可以取消正在执行的命令
+  4. 收集命令输出
+end note
+
+@enduml

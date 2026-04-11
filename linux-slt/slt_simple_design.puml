@@ -1,0 +1,186 @@
+@startuml
+' SLT下位机系统 - 简化类图设计
+title SLT下位机系统架构设计
+
+skinparam class {
+    BackgroundColor<<Interface>> #FFF2CC
+    BackgroundColor<<Component>> #D5E8D4
+    BackgroundColor<<Model>> #DAE8FC
+    BackgroundColor<<Config>> #E1D5E7
+    ArrowColor #444444
+    BorderColor #444444
+}
+
+' ================== 核心组件 ==================
+package "核心控制器" {
+  class SLTController <<Component>> {
+    - config: SLTConfig
+    - serialPort: ISerialPort
+    - cmdParser: ICommandParser
+    - executor: ICommandExecutor
+    - logProcessor: ILogProcessor
+    - isRunning: boolean
+    + start(): void
+    + stop(): void
+    + process(): ExecutionResult
+    + getStatus(): string
+  }
+}
+
+package "通信层" {
+  interface ISerialPort <<Interface>> {
+    + open(port: string): boolean
+    + read(): string
+    + write(data: string): boolean
+    + close(): void
+  }
+  
+  class SerialPortImpl <<Component>> {
+    - fd: int
+    + open(port: string): boolean
+    + read(): string
+    + write(data: string): boolean
+    + close(): void
+    - configure(): boolean
+  }
+}
+
+package "命令处理层" {
+  interface ICommandParser <<Interface>> {
+    + parse(raw: string): TestCommand
+    + validate(cmd: TestCommand): boolean
+  }
+  
+  class SLTCommandParser <<Component>> {
+    + parse(raw: string): TestCommand
+    + validate(cmd: TestCommand): boolean
+    - parseParameters(cmdLine: string): Map<string, string>
+    - extractTestName(cmdLine: string): string
+  }
+  
+  interface ICommandExecutor <<Interface>> {
+    + execute(cmd: TestCommand): ExecutionResult
+    + cancel(): boolean
+  }
+  
+  class SystemExecutor <<Component>> {
+    + execute(cmd: TestCommand): ExecutionResult
+    + cancel(): boolean
+    - runShellCommand(cmd: string, timeout: int): tuple<code, output>
+    - killProcess(pid: int): boolean
+  }
+}
+
+package "日志处理层" {
+  interface ILogProcessor <<Interface>> {
+    + collectLogs(cmdId: string): string
+    + matchPattern(logs: string, pattern: string): boolean
+    + saveLogs(cmdId: string, logs: string): boolean
+  }
+  
+  class PatternMatcher <<Component>> {
+    + collectLogs(cmdId: string): string
+    + matchPattern(logs: string, pattern: string): boolean
+    + saveLogs(cmdId: string, logs: string): boolean
+    - regexMatch(text: string, pattern: string): boolean
+  }
+}
+
+package "数据模型" {
+  class TestCommand <<Model>> {
+    - id: string
+    - name: string
+    - shellCmd: string
+    - pattern: string
+    - timeoutMs: int
+    - verbose: boolean
+    + getId(): string
+    + getName(): string
+    + getShellCmd(): string
+    + getPattern(): string
+    + getTimeout(): int
+    + isVerbose(): boolean
+  }
+  
+  class ExecutionResult <<Model>> {
+    - commandId: string
+    - exitCode: int
+    - output: string
+    - patternMatched: boolean
+    - execTimeMs: int
+    + getCommandId(): string
+    + getExitCode(): int
+    + getOutput(): string
+    + isPatternMatched(): boolean
+    + getExecTime(): int
+  }
+}
+
+package "配置管理" {
+  class SLTConfig <<Config>> {
+    - serialPort: string
+    - baudRate: int
+    - logDir: string
+    - defaultTimeout: int
+    - cmdStartMarker: string
+    - cmdEndMarker: string
+    + getSerialPort(): string
+    + getBaudRate(): int
+    + getLogDir(): string
+    + getDefaultTimeout(): int
+    + getCmdStartMarker(): string
+    + getCmdEndMarker(): string
+    + load(file: string): boolean
+  }
+}
+
+' ================== 关系连接 ==================
+
+' 控制器依赖
+SLTController --> ISerialPort
+SLTController --> ICommandParser
+SLTController --> ICommandExecutor
+SLTController --> ILogProcessor
+SLTController --> SLTConfig
+
+' 接口实现
+SerialPortImpl ..|> ISerialPort
+SLTCommandParser ..|> ICommandParser
+SystemExecutor ..|> ICommandExecutor
+PatternMatcher ..|> ILogProcessor
+
+' 数据处理流
+SLTCommandParser --> TestCommand
+SystemExecutor --> TestCommand
+SystemExecutor --> ExecutionResult
+PatternMatcher --> TestCommand
+
+' ================== 序列流程说明 ==================
+note top of SLTController
+  处理流程：
+  1. 读取串口数据
+  2. 解析为TestCommand
+  3. 执行Shell命令
+  4. 收集并分析日志
+  5. 返回匹配结果(0/-1)
+end note
+
+note right of TestCommand
+  命令格式示例：
+  ACPU_TEST_0001 -v -c "echo hello" -p "hello" -t 1000
+  字段说明：
+  -v: verbose模式
+  -c: shell命令
+  -p: 匹配模式
+  -t: 超时时间(ms)
+end note
+
+note left of SLTCommandParser
+  支持标记符：
+  slt_test_cmd_start:$$
+  slt_test_cmd_end:^^
+  slt_result_start:$&
+  slt_result_end:^^
+end note
+
+@enduml

@@ -1,0 +1,13 @@
+# SLT下位机系统配置文件示例
+# 格式: INI风格 (section/key: value)
+
+[serial]
+port: /dev/ttyAMA0
+baud_rate: 115200
+
+[logging]
+directory: /var/log/slt/
+
+[commands]
+default_timeout_ms: 5000
+max_command_size: 4096
