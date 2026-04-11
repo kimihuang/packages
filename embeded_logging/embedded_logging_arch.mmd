@@ -1,0 +1,102 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e8f5e9', 'primaryBorderColor': '#2e7d32', 'primaryTextColor': '#1b5e20', 'lineColor': '#43a047', 'secondaryColor': '#fff3e0', 'tertiaryColor': '#e3f2fd'}}}%%
+
+graph TB
+    subgraph APP["应用层 Application Layer"]
+        direction LR
+        API["elog_api.h<br/>elog_debug/elog_info/elog_warn/elog_error<br/>elog_event_begin/end<br/>elog_assert"]
+        MACRO["ELOG_D / ELOG_I / ELOG_W / ELOG_E<br/>ELOG_TAG_D(tag, fmt, ...)<br/>ELOG_EVENT(event_id, ...)"]
+        API --- MACRO
+    end
+
+    subgraph CORE["核心层 Core Layer"]
+        direction TB
+        MSG["LogMessage<br/>─────────────────<br/>log_id: uint8_t<br/>level: uint8_t<br/>timestamp: uint32_t<br/>tag: const char*<br/>file: const char*<br/>line: uint16_t<br/>pid: uint16_t<br/>tid: uint16_t<br/>msg: char[]"]
+
+        DISPATCH["Dispatcher<br/>─────────────────<br/>write_dispatcher()<br/>─────────────────<br/>logger_function_t*<br/>注册/替换日志后端"]
+
+        FILTER["LogFilter<br/>─────────────────<br/>global_level: uint8_t<br/>tag_level_map[]<br/>module_level_map[]<br/>─────────────────<br/>should_log()<br/>set_level()"]
+
+        FMT["Formatter<br/>─────────────────<br/>format_text()<br/>format_binary()<br/>─────────────────<br/>时间戳格式化<br/>彩色输出<br/>源码位置"]
+
+        DISPATCH --- MSG
+        MSG --- FILTER
+        FILTER --- FMT
+    end
+
+    subgraph BUFFER["缓冲层 Buffer Layer"]
+        direction TB
+        BUF_IFACE["LogBuffer (抽象接口)<br/>─────────────────<br/>log()<br/>flush()<br/>clear()<br/>size() / capacity()"]
+
+        RING_BUF["RingLogBuffer<br/>─────────────────<br/>ring_buffer_t<br/>动态/静态分配<br/>无锁 SPSC<br/>自动覆写/阻塞"]
+
+        SHM_BUF["ShmLogBuffer<br/>─────────────────<br/>共享内存区域<br/>多进程安全<br/>POSIX shm"]
+
+        BUF_IFACE --- RING_BUF
+        BUF_IFACE --- SHM_BUF
+    end
+
+    subgraph TRANSPORT["传输层 Transport Layer"]
+        direction LR
+        T_IFACE["LogTransport (抽象接口)<br/>─────────────────<br/>open() / close()<br/>write(entry) / flush()"]
+
+        T_UART["UartTransport<br/>─────────────────<br/>UART / serial<br/>DMA 零拷贝<br/>波特率自适应"]
+
+        T_FILE["FileTransport<br/>─────────────────<br/>文件系统<br/>滚动日志<br/>可选压缩"]
+
+        T_NET["NetTransport<br/>─────────────────<br/>UDP/TCP<br/>远程 syslog<br/>TLS 可选"]
+
+        T_CAN["CanTransport<br/>─────────────────<br/>CAN 总线<br/>UDS 诊断<br/>ISO-TP"]
+
+        T_RTOS["RtosQueueTransport<br/>─────────────────<br/>RTOS 消息队列<br/>FreeRTOS/CMSIS-RTOS<br/>线程间传递"]
+
+        T_IFACE --- T_UART
+        T_IFACE --- T_FILE
+        T_IFACE --- T_NET
+        T_IFACE --- T_CAN
+        T_IFACE --- T_RTOS
+    end
+
+    subgraph BACKEND["后端服务层 Backend Service Layer"]
+        direction LR
+        DAEMON["elogd 守护进程<br/>─────────────────<br/>多源汇聚<br/>优先级裁剪<br/>统一输出"]
+
+        LOGCAT["elogcat CLI<br/>─────────────────<br/>多缓冲区读取<br/>过滤/着色/格式化"]
+
+        COLLECTOR["日志采集器<br/>─────────────────<br/>远程上报<br/>OTA 配套"]
+    end
+
+    subgraph STORAGE["持久化层 Storage Layer"]
+        direction LR
+        FS["文件系统<br/>─────────────────<br/>FAT32 / LittleFS<br/>滚动策略<br/>可选压缩"]
+
+        PSTORE["pstore / NVRAM<br/>─────────────────<br/>掉电保持<br/>关键日志<br/>崩溃恢复"]
+
+        FLASH["Flash 环形区<br/>─────────────────<br/>原始分区<br/>磨损均衡<br/>断电安全"]
+    end
+
+    subgraph CONFIG["配置层 Config Layer"]
+        direction LR
+        COMPILE["编译期配置<br/>─────────────────<br/>ELOG_MAX_TAG_LEN<br/>ELOG_MAX_MSG_LEN<br/>ELOG_BUFFER_SIZE<br/>ELOG_LEVEL_DEFAULT<br/>ELOG_COLOR_ENABLE"]
+
+        RUNTIME["运行时配置<br/>─────────────────<br/>动态级别调整<br/>模块开关<br/>传输目标切换<br/>缓冲区大小调整"]
+
+        COMPILE --- RUNTIME
+    end
+
+    APP -->|调用| CORE
+    CORE -->|写入| BUFFER
+    BUFFER -->|分发| TRANSPORT
+    TRANSPORT -->|输出| STORAGE
+    TRANSPORT -->|网络| BACKEND
+    BACKEND -->|采集| STORAGE
+    CONFIG -.->|编译期宏| CORE
+    CONFIG -.->|编译期宏| BUFFER
+    CONFIG -.->|运行时 API| CORE
+
+    style APP fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style CORE fill:#fff8e1,stroke:#f57f17,stroke-width:2px
+    style BUFFER fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style TRANSPORT fill:#fce4ec,stroke:#c62828,stroke-width:2px
+    style BACKEND fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    style STORAGE fill:#efebe9,stroke:#4e342e,stroke-width:2px
+    style CONFIG fill:#e0f7fa,stroke:#00838f,stroke-width:2px,stroke-dasharray:5 5

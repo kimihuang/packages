@@ -1,0 +1,70 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f3e5f5', 'primaryBorderColor': '#6a1b9a', 'lineColor': '#43a047'}}}%%
+
+sequenceDiagram
+    participant Main as main()
+    participant Buf as RingLogBuffer
+    participant RL as ReaderList
+    participant Cmd as CmdListener
+    participant Listener as LogListener
+    participant Reader as LogReader
+    participant Stats as LogStatistics
+    participant Prune as LogPrune
+    participant Binder as elogd_service
+
+    Main->>Buf: RingLogBuffer(capacity)
+    activate Buf
+    Buf-->>Main: buf
+    deactivate Buf
+
+    Main->>RL: ReaderList()
+    activate RL
+    RL-->>Main: reader_list
+    deactivate RL
+
+    Main->>Stats: LogStatistics()
+    Main->>Prune: LogPrune(rules)
+
+    rect rgb(227, 242, 253)
+        Note over Main,Binder: 启动 Socket/接口服务
+        Main->>Cmd: CmdListener(buf, stats, prune)
+        activate Cmd
+        Cmd->>Cmd: listen("/var/run/elogd.sock", SOCK_STREAM)
+        Note right of Cmd: 命令控制端口<br/>clear/size/stats/prune
+        deactivate Cmd
+
+        Main->>Listener: LogListener(buf, reader_list)
+        activate Listener
+        Listener->>Listener: listen("/var/run/elogdw.sock", SOCK_DGRAM)
+        Note right of Listener: 日志写入端口<br/>接收客户端日志
+        deactivate Listener
+
+        Main->>Reader: LogReader(buf, reader_list)
+        activate Reader
+        Reader->>Reader: listen("/var/run/elogdr.sock", SOCK_SEQPACKET)
+        Note right of Reader: 日志读取端口<br/>推送给 elogcat
+        deactivate Reader
+    end
+
+    rect rgb(232, 245, 233)
+        Note over Main,Binder: 注册系统服务
+        Main->>Binder: elogd_native_service_init(reader_list)
+        activate Binder
+        Binder-->>Main: registered
+        deactivate Binder
+    end
+
+    rect rgb(255, 243, 224)
+        Note over Main,Binder: 事件循环
+        loop main event loop
+            Main->>Cmd: poll(events, timeout)
+            Main->>Listener: poll(events, timeout)
+            Main->>Reader: poll(events, timeout)
+
+            Listener-->>Buf: HandleData() → buf.log()
+            Buf->>RL: NotifyNewLog()
+            RL->>Reader: TriggerReader()
+            Reader->>Buf: FlushTo(writer)
+            Buf-->>Reader: entries
+            Reader-->>Main: sendDatav() → elogcat
+        end
+    end

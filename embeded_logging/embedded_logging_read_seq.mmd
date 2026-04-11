@@ -1,0 +1,54 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e3f2fd', 'primaryBorderColor': '#1565c0', 'lineColor': '#43a047'}}}%%
+
+sequenceDiagram
+    participant Client as elogcat / elogd
+    participant API as elog_read API
+    participant Buf as RingLogBuffer
+    participant Filter as LogFilter
+    participant Writer as FileReader / UartReader
+
+    Client->>API: elog_reader_init(mode, tail, pid_filter)
+    activate API
+    API->>API: reader = calloc(sizeof(elog_reader_t))
+    API->>Buf: register_reader(reader)
+    API-->>Client: reader handle
+    deactivate API
+
+    loop 读取循环
+        Client->>API: elog_reader_read(reader, &msg, timeout_ms)
+        activate API
+
+        API->>Buf: flush(writer, filter)
+        activate Buf
+
+        loop 遍历缓冲区
+            Buf->>Buf: lock → 读取 entry
+            Buf->>Filter: should_log(entry.level, entry.tag)
+            Filter-->>Buf: true / false
+
+            alt should_log == true
+                Buf->>Writer: write(entry)
+                Writer-->>Buf: len
+            end
+
+            Buf->>Buf: advance read_pos
+        end
+
+        Buf-->>API: flushed_count
+        deactivate Buf
+
+        alt flushed_count == 0
+            API->>API: wait on condition_variable<br/>或 poll(timeout_ms)
+            API-->>Client: 0 (timeout, no new logs)
+        else flushed_count > 0
+            API-->>Client: flushed_count
+        end
+        deactivate API
+    end
+
+    Client->>API: elog_reader_free(reader)
+    activate API
+    API->>Buf: unregister_reader(reader)
+    API->>API: free(reader)
+    API-->>Client: done
+    deactivate API

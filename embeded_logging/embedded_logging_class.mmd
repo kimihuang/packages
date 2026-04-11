@@ -1,0 +1,232 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e3f2fd', 'primaryBorderColor': '#1565c0', 'lineColor': '#43a047'}}}%%
+
+classDiagram
+    direction TB
+
+    class LogMessage {
+        <<packed struct>>
+        +uint8_t log_id
+        +uint8_t level
+        +uint32_t timestamp
+        +uint16_t pid
+        +uint16_t tid
+        +uint16_t line
+        +const char* tag
+        +const char* file
+        +char msg[ELOG_MAX_MSG_LEN]
+        +uint16_t msg_len
+        +get_total_len() uint16_t
+    }
+
+    class LogBuffer {
+        <<abstract>>
+        #char* data_
+        #size_t head_
+        #size_t tail_
+        #size_t capacity_
+        #size_t watermark_
+        +log(entry: LogMessage*) int
+        +flush(writer: LogWriter*, filter: LogFilter*) int
+        +clear() void
+        +size() size_t
+        +capacity() size_t
+        +is_empty() bool
+        +is_full() bool
+    }
+
+    class RingLogBuffer {
+        -char buffer_[ELOG_BUFFER_SIZE]
+        -size_t write_pos_
+        -size_t read_pos_
+        -elog_mutex_t lock_
+        +log(entry: LogMessage*) int
+        +flush(writer: LogWriter*, filter: LogFilter*) int
+        +clear() void
+        +available() size_t
+    }
+
+    class ShmLogBuffer {
+        -int shm_fd_
+        -char* shm_addr_
+        -size_t shm_size_
+        -elog_sem_t* sem_
+        +log(entry: LogMessage*) int
+        +flush(writer: LogWriter*, filter: LogFilter*) int
+        +attach(name: const char*) int
+        +detach() void
+    }
+
+    class LogWriter {
+        <<abstract>>
+        +uid() uint16_t
+        +privileged() bool
+        +write(entry: LogMessage*) int*
+        +flush() int*
+        +shutdown() void
+        +name() const char**
+    }
+
+    class UartWriter {
+        -int fd_
+        -uint32_t baudrate_
+        -uint8_t* tx_buf_
+        -size_t tx_buf_len_
+        -bool dma_enabled_
+        +open(config: UartConfig*) int
+        +write(entry: LogMessage*) int
+        +flush() int
+        +set_baudrate(baud: uint32_t) void
+        +name() const char*
+    }
+
+    class FileWriter {
+        -int fd_
+        -char filepath_[ELOG_PATH_MAX]
+        -size_t file_size_
+        -size_t max_file_size_
+        -uint8_t max_files_
+        -bool compress_enabled_
+        +open(path: const char*, flags: int) int
+        +write(entry: LogMessage*) int
+        +flush() int
+        +rotate() void
+        +name() const char*
+    }
+
+    class NetWriter {
+        -int sock_fd_
+        -elog_net_proto_t proto_
+        -char host_[64]
+        -uint16_t port_
+        -bool connected_
+        +open(addr: const char*, port: uint16_t) int
+        +write(entry: LogMessage*) int
+        +reconnect() int
+        +name() const char*
+    }
+
+    class RtosQueueWriter {
+        -elog_queue_t queue_
+        -int max_depth_
+        -elog_task_t consumer_task_
+        +open(queue: elog_queue_t) int
+        +write(entry: LogMessage*) int
+        +start_consumer(writer: LogWriter*) void
+        +name() const char*
+    }
+
+    class LogFilter {
+        -uint8_t global_level_
+        -tag_level_t tag_levels_[ELOG_MAX_TAGS]
+        -uint8_t tag_count_
+        -bool color_enabled_
+        -bool timestamp_enabled_
+        -bool source_location_
+        +should_log(level: uint8_t, tag: const char*) bool
+        +set_global_level(level: uint8_t) void
+        +set_tag_level(tag: const char*, level: uint8_t) int
+        +get_tag_level(tag: const char*) uint8_t
+        +reset() void
+    }
+
+    class LogFormatter {
+        +format_text(entry: LogMessage*, buf: char*, len: size_t) int
+        +format_binary(entry: LogMessage*, buf: uint8_t*, len: size_t) int
+        +format_color(level: uint8_t) const char*
+        +timestamp_str(ts: uint32_t, buf: char*) void
+        -level_str(level: uint8_t) const char*
+    }
+
+    class LogTransport {
+        <<abstract>>
+        +open() int*
+        +close() void*
+        +write(entry: LogMessage*) int*
+        +flush() int*
+        +is_open() bool
+        +name() const char**
+    }
+
+    class UartTransport {
+        -UartWriter writer_
+        +open() int
+        +close() void
+        +write(entry: LogMessage*) int
+        +name() const char*
+    }
+
+    class FileTransport {
+        -FileWriter writer_
+        -FileTransportConfig config_
+        +open() int
+        +close() void
+        +write(entry: LogMessage*) int
+        +name() const char*
+    }
+
+    class NetTransport {
+        -NetWriter writer_
+        +open() int
+        +close() void
+        +write(entry: LogMessage*) int
+        +reconnect() int
+        +name() const char*
+    }
+
+    class TransportRegistry {
+        -LogTransport* transports_[ELOG_MAX_TRANSPORTS]
+        -uint8_t transport_count_
+        -elog_mutex_t lock_
+        +register(transport: LogTransport*) int
+        +unregister(transport: LogTransport*) int
+        +dispatch(entry: LogMessage*) int
+        +flush_all() void
+        +close_all() void
+        +count() uint8_t
+    }
+
+    class LogStatistics {
+        -uint32_t total_count_[LOG_ID_MAX]
+        -uint32_t dropped_count_[LOG_ID_MAX]
+        -uint32_t level_count_[8]
+        -uint32_t buffer_usage_
+        -uint32_t buffer_peak_
+        +on_log(entry: LogMessage*) void
+        +on_drop() void
+        +get_stats(buf: char*, len: size_t) int
+        +reset() void
+    }
+
+    class LogPrune {
+        -uint8_t high_priority_count_
+        -prune_rule_t high_rules_[ELOG_MAX_PRUNE_RULES]
+        -prune_rule_t low_rules_[ELOG_MAX_PRUNE_RULES]
+        -uint32_t prune_threshold_
+        +init(rules: const char*) int
+        +should_prune(tag: const char*, size: size_t) bool
+        +prune(buffer: LogBuffer*, count: uint32_t) uint32_t
+        +is_protected(tag: const char*) bool
+        +is_low_priority(tag: const char*) bool
+    }
+
+    LogBuffer <|-- RingLogBuffer
+    LogBuffer <|-- ShmLogBuffer
+    LogWriter <|-- UartWriter
+    LogWriter <|-- FileWriter
+    LogWriter <|-- NetWriter
+    LogWriter <|-- RtosQueueWriter
+    LogTransport <|-- UartTransport
+    LogTransport <|-- FileTransport
+    LogTransport <|-- NetTransport
+    LogTransport o-- LogWriter : composes
+    TransportRegistry o-- LogTransport : manages
+    RingLogBuffer --> LogStatistics : notifies
+    TransportRegistry --> LogFilter : checks
+    TransportRegistry --> LogFormatter : formats
+
+    note for LogMessage "借鉴 android LogBufferElement\npacked 结构体减少内存占用"
+    note for LogBuffer "借鉴 android LogBuffer 抽象接口\n支持多实现: Ring/SharedMem"
+    note for LogWriter "借鉴 android LogWriter 抽象\n不同输出目标统一接口"
+    note for TransportRegistry "借鉴 android write_to_log()<br/>双路分发 → 多路分发"
+    note for LogPrune "借鉴 android PruneList<br/>高/低优先级两级裁剪"
+    note for LogStatistics "借鉴 android LogStatistics<br/>多维度轻量统计"

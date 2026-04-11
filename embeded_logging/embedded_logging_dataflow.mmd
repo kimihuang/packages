@@ -1,0 +1,78 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e8f5e9', 'primaryBorderColor': '#2e7d32', 'lineColor': '#43a047'}}}%%
+
+graph LR
+    subgraph Sources["日志源 (Log Sources)"]
+        APP["App A<br/>elog_init('app_a')"]
+        DRV["Driver<br/>elog_init('driver')"]
+        MIDL["Middleware<br/>elog_init('middleware')"]
+        KERN["Kernel Module<br/>klog_write()"]
+        RTOS["RTOS Event<br/>elog_event()"]
+    end
+
+    subgraph ClientLib["客户端库 (libelog.so)"]
+        API["elog API<br/>elog_d/i/w/e()"]
+        EVENT["Event API<br/>elog_event_begin/end()"]
+        WRITE["Transport Registry<br/>dispatch()"]
+        COMPRESS["Compress (可选)<br/>lz4 / miniz"]
+        WRITE_TX["writer_func_t*<br/>函数指针分发"]
+
+        API --> EVENT
+        API --> WRITE
+        EVENT --> WRITE
+        WRITE --> WRITE_TX
+    end
+
+    subgraph Daemon["elogd 守护进程"]
+        IN_LOG["LogListener<br/>/var/run/elogdw<br/>SOCK_DGRAM"]
+        IN_CMD["CmdListener<br/>/var/run/elogd<br/>SOCK_STREAM"]
+        OUT_READ["LogReader<br/>/var/run/elogdr<br/>SOCK_SEQPACKET"]
+        BUF["RingLogBuffer<br/>×log_id"]
+        STATS["LogStatistics"]
+        PRUNE["LogPrune"]
+        TAG["EventTagMap"]
+
+        IN_LOG --> BUF
+        BUF --> STATS
+        BUF --> PRUNE
+        TAG -.->|event 解码| OUT_READ
+        IN_CMD -->|命令| BUF
+        IN_CMD --> STATS
+        IN_CMD --> PRUNE
+        BUF --> OUT_READ
+    end
+
+    subgraph Outputs["输出目标 (Log Outputs)"]
+        UART_OUT["UART Console<br/>实时调试"]
+        FILE_OUT["Log Files<br/>/var/log/elog/<br/>滚动+压缩"]
+        NET_OUT["Network<br/>UDP syslog<br/>TCP 长连接"]
+        FLASH_OUT["Flash Ring<br/>掉电保持<br/>pstore 分区"]
+    end
+
+    subgraph Tools["工具链"]
+        CAT["elogcat<br/>多缓冲区读取<br/>过滤/着色"]
+        DUMP["elogdump<br/>二进制转文本<br/>离线分析"]
+        CONF["elogctl<br/>运行时配置<br/>级别/裁剪规则"]
+    end
+
+    APP --> API
+    DRV --> API
+    MIDL --> API
+    KERN -->|"procfs/ioctl"| IN_LOG
+    RTOS --> API
+
+    WRITE -->|DGRAM| IN_LOG
+    WRITE -->|"可选"| COMPRESS
+    COMPRESS -->|pstore| FLASH_OUT
+
+    OUT_READ -->|"PUSH"| CAT
+    OUT_READ -->|"PUSH"| NET_OUT
+    OUT_READ -->|"PUSH"| UART_OUT
+    BUF -->|"定时 flush"| FILE_OUT
+
+    CONF -->|"SOCK_STREAM"| IN_CMD
+
+    style Sources fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style ClientLib fill:#fff8e1,stroke:#f57f17,stroke-width:2px
+    style Daemon fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Outputs fill:#fce4ec,stroke:#c62828,stroke-width:2px
+    style Tools fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px

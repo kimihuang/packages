@@ -1,0 +1,85 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e8f5e9', 'primaryBorderColor': '#2e7d32', 'lineColor': '#43a047', 'secondaryColor': '#fff3e0', 'tertiaryColor': '#e3f2fd'}}}%%
+
+sequenceDiagram
+    participant App as 应用代码
+    participant API as elog API
+    participant Filter as LogFilter
+    participant Buf as RingLogBuffer
+    participant Registry as TransportRegistry
+    participant T_uart as UartTransport
+    participant T_file as FileTransport
+    participant T_net as NetTransport
+    participant Prune as LogPrune
+    participant Stats as LogStatistics
+
+    App->>API: ELOG_I("sensor", "temp=%d", value)
+    activate API
+
+    API->>API: va_list 格式化 → LogMessage
+
+    API->>Filter: should_log(level=INFO, tag="sensor")
+    activate Filter
+    Filter-->>API: true (global_level ≤ INFO)
+    deactivate Filter
+
+    API->>Buf: log(&msg)
+    activate Buf
+
+    Buf->>Buf: acquire_lock()
+
+    alt 缓冲区有空间
+        Buf->>Buf: memcpy entry → ring_buffer
+        Buf->>Stats: on_log(&msg)
+        activate Stats
+        Stats->>Stats: total_count_++, level_count_[INFO]++
+        deactivate Stats
+    else 缓冲区已满
+        Buf->>Prune: should_prune(tag, current_size)
+        activate Prune
+        Prune-->>Buf: true (low priority tag)
+        deactivate Prune
+        Buf->>Buf: overwrite oldest / discard low-priority
+        Buf->>Stats: on_drop()
+        activate Stats
+        Stats->>Stats: dropped_count_++
+        deactivate Stats
+    end
+
+    Buf->>Buf: release_lock()
+    Buf-->>API: 0 (success)
+    deactivate Buf
+
+    API->>Registry: dispatch(&msg)
+    activate Registry
+
+    par 多路并行分发
+        Registry->>T_uart: write(&msg)
+        activate T_uart
+        T_uart->>T_uart: format_text() → UART TX DMA
+        T_uart-->>Registry: len
+        deactivate T_uart
+    and
+        Registry->>T_file: write(&msg)
+        activate T_file
+        T_file->>T_file: format_binary() → fwrite()
+        alt file_size > max_file_size
+            T_file->>T_file: rotate() 滚动日志
+        end
+        T_file-->>Registry: len
+        deactivate T_file
+    and
+        Registry->>T_net: write(&msg)
+        activate T_net
+        alt !connected_
+            T_net->>T_net: reconnect()
+        end
+        T_uart->>T_net: sendto(sock, &entry)
+        T_net-->>Registry: len
+        deactivate T_net
+    end
+
+    Registry-->>API: 0 (all dispatched)
+    deactivate Registry
+
+    API-->>App: void
+    deactivate API

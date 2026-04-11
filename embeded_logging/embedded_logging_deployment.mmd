@@ -1,0 +1,73 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#fff3e0', 'primaryBorderColor': '#e65100', 'lineColor': '#ff9800'}}}%%
+
+graph TB
+    subgraph MMU["有 MMU 的嵌入式 Linux"]
+        direction TB
+        subgraph USERSPACE["用户空间"]
+            APP_A["App A<br/>libelog.so"]
+            APP_B["App B<br/>libelog.so"]
+            ELOGCAT["elogcat"]
+        end
+
+        subgraph KERNEL["内核空间"]
+            KERN_LOG["klog<br/>printk → /dev/kmsg"]
+        end
+
+        subgraph DAEMON["elogd 守护进程"]
+            LISTEN["LogListener<br/>SOCK_DGRAM"]
+            BUFFER["RingLogBuffer"]
+            READER["LogReader<br/>SOCK_SEQPACKET"]
+            CMD["CmdListener<br/>SOCK_STREAM"]
+            FILE_OUT["FileWriter<br/>/var/log/elog/"]
+        end
+
+        APP_A -->|"writev()<br/>SCM_CREDENTIALS"| LISTEN
+        APP_B -->|"writev()"| LISTEN
+        KERN_LOG -->|"/proc/kmsg"| LISTEN
+        LISTEN --> BUFFER
+        BUFFER --> READER
+        BUFFER --> FILE_OUT
+        READER -->|"push"| ELOGCAT
+        CMD -->|"clear/size/stats"| BUFFER
+
+        SOCKETS["Unix Domain Socket<br/>/var/run/elogd*"]
+
+        style USERSPACE fill:#e8f5e9,stroke:#2e7d32
+        style KERNEL fill:#ffebee,stroke:#c62828
+        style DAEMON fill:#e3f2fd,stroke:#1565c0
+    end
+
+    subgraph NOMMU["无 MMU 的 RTOS / 裸机"]
+        direction TB
+        TASK_A["Task A<br/>elog API (静态链接)"]
+        TASK_B["Task B<br/>elog API (静态链接)"]
+        ISR["ISR Handler<br/>elog_isr()"]
+        BUF_RTOS["RingLogBuffer<br/>全局/静态"]
+        TX_UART["UartTransport<br/>DMA TX"]
+        TX_FILE["FileTransport<br/>LittleFS"]
+        TX_QUEUE["RtosQueueTransport<br/>→ Logger Task"]
+        LOGGER_TASK["Logger Task<br/>低优先级<br/>统一输出"]
+
+        TASK_A -->|"lock-free write"| BUF_RTOS
+        TASK_B -->|"lock-free write"| BUF_RTOS
+        ISR -->|"non-blocking"| BUF_RTOS
+        BUF_RTOS -->|"interrupt"| TX_QUEUE
+        TX_QUEUE --> LOGGER_TASK
+        LOGGER_TASK --> TX_UART
+        LOGGER_TASK --> TX_FILE
+
+        style NOMMU fill:#fff3e0,stroke:#e65100
+    end
+
+    subgraph COMMON["公共组件 (两个场景共享)"]
+        direction LR
+        FILTER["LogFilter<br/>级别/标签过滤"]
+        FMT["LogFormatter<br/>文本/二进制格式化"]
+        STATS["LogStatistics<br/>计数统计"]
+        PRUNE["LogPrune<br/>优先级裁剪"]
+        EVENT["EventTagMap<br/>事件标签映射"]
+        COMPRESS["Compress (可选)<br/>lz4 / miniz"]
+    end
+
+    COMMON -.->|"静态库"| MMU
+    COMMON -.->|"静态库"| NOMMU
