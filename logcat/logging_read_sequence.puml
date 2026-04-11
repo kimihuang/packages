@@ -1,0 +1,232 @@
+@startuml logging_read_sequence
+
+' ====== 样式设置 ======
+skinparam maxMessageSize 150
+skinparam ParticipantPadding 10
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+
+title Android Logging 日志读取时序图\n(logcat → liblog → logd → 数据返回)
+
+autonumber
+
+' ====== 参与者 ======
+participant "logcat\n(CLI Tool)" as logcat order 10
+participant "android_logger\n_list_alloc()" as list_alloc order 20
+participant "android_logger\n_open()" as logger_open order 30
+participant "TransportRead\nRegistry" as registry order 40
+participant "LogdRead\n(logd_reader.cpp)" as logdread order 50
+participant "PmsgRead\n(pmsg_reader.cpp)" as pmsgread order 60
+participant "/dev/socket/logdr\n(SOCK_SEQPACKET)" as sock_logdr order 70
+participant "/sys/fs/pstore/\npmsg-ramoops-0" as pstore order 80
+participant "LogReader\n(logd)" as logreader order 90
+participant "LogdNativeService\n(Binder)" as logdnative order 100
+participant "LogReaderList" as reader_list order 110
+participant "LogReaderThread" as reader_thread order 120
+participant "LogBuffer\n(Serialized/Simple)" as logbuf order 130
+participant "FlushToState" as flush_state order 140
+participant "SocketLogWriter" as socket_writer order 150
+
+== 1. logcat 初始化读取 ==
+
+logcat -> list_alloc : android_logger_list_alloc(\n  mode=ANDROID_LOG_RDONLY,\n  tail=0, pid=0)
+activate list_alloc
+list_alloc -> list_alloc : 创建 logger_list{\n  mode, tail, pid,\n  transports, logger\n}
+note right of list_alloc : mode 支持标志:\nANDROID_LOG_RDONLY\nANDROID_LOG_WRONLY\nANDROID_LOG_NONBLOCK\nANDROID_LOG_WRAP\nANDROID_LOG_PSTORE
+
+logcat -> logger_open : android_logger_open(\n  logger_list, LOG_ID_MAIN)
+activate logger_open
+logger_open -> logger_open : 创建 android_logger{\n  id_=LOG_ID_MAIN,\n  transport_=logdReadTransport\n}
+
+logcat -> logger_open : android_logger_open(\n  logger_list, LOG_ID_SYSTEM)
+note right of logger_open : 可打开多个 log_id\n同时读取
+
+== 2. 注册读取传输层 ==
+
+logger_open -> registry : 遍历已注册 read transports
+activate registry
+registry -> logdread : logdReadTransport
+activate logdread
+registry -> pmsgread : pmsgReadTransport\n[如果 ANDROID_LOG_PSTORE 模式]
+activate pmsgread
+deactivate registry
+
+== 3. LogdRead 建立连接 ==
+
+logdread -> logdread : Open()
+logdread -> sock_logdr : socket(AF_UNIX, SOCK_SEQPACKET)\nconnect("/dev/socket/logdr")
+activate sock_logdr
+
+logdread -> sock_logdr : 发送读取参数\n"tail=0 pid=0 start=0\nlog id=LOG_ID_MAIN"
+note right of sock_logdr
+  通过 socket 发送 ASCII 命令:
+  tail=N       最近 N 条
+  pid=N        过滤进程
+  start=N      起始序列号
+  log=id       日志缓冲区 ID
+  nonblock=1   非阻塞模式
+end note
+
+== 4. logd 处理读取请求 ==
+
+sock_logdr -> logreader : onDataAvailable(client)
+activate logreader
+
+logreader -> logreader : 解析客户端请求参数\ntail, pid, start_time, log_id
+
+logreader -> logdnative : 检查读取权限\n(non-privileged reader)
+activate logdnative
+
+logdnative -> logdnative : approve()/decline()\nAppOps 权限检查
+note right of logdnative
+  android.permission.READ_LOGS
+  AppOps: OP_READ_LOGS
+  非特权进程需要审批
+end note
+
+alt 权限被拒绝
+    logdnative -> logreader : decline → 关闭连接
+    logreader -> sock_logdr : 关闭 socket
+else 权限通过
+    logdnative -> logreader : approve
+end
+deactivate logdnative
+
+logreader -> reader_list : AddPendingThread(\n  new LogReaderThread)
+activate reader_list
+
+reader_list -> reader_list : HandlePendingThread()\n验证 uid/gid/pid
+
+reader_list -> reader_thread : AddAndRunThread(\n  LogReaderThread)
+activate reader_thread
+
+== 5. LogReaderThread 初始化 ==
+
+reader_thread -> logbuf : CreateFlushToState(\n  start=0, log_mask=LOG_ID_MAIN)
+activate flush_state
+flush_state -> flush_state : SerializedFlushToState:\n  初始化 LogPosition[LOG_ID_MAX]\n  设置起始读取位置
+deactivate flush_state
+
+reader_thread -> socket_writer : new SocketLogWriter(\n  LogReader, SocketClient)
+activate socket_writer
+
+== 6. 首次 FlushTo (历史日志) ==
+
+reader_thread -> logbuf : FlushTo(writer_, flush_state_, filter)
+activate logbuf
+
+logbuf -> flush_state : 获取起始序列号\nstart = flush_to_state_.start()
+
+loop 遍历 SerializedLogChunk (从 start 开始)
+    logbuf -> logchunk_inner : **[SerializedLogChunk]**
+    
+    alt 有压缩数据
+        logchunk_inner -> logchunk_inner : Decompress(compressed_log_)\nZstdCompressionEngine
+    end
+    
+    loop 每个 SerializedLogEntry
+        logchunk_inner -> socket_writer : Flush(writer, log_id)
+        
+        socket_writer -> socket_writer : 构造 logger_entry{\n  len, hdr_size, pid, tid,\n  sec, nsec\n} + payload
+        socket_writer -> sock_logdr : sendDatav(\n  [logger_entry, tag, msg])
+    end
+end
+
+deactivate logbuf
+
+== 7. 实时日志监听循环 ==
+
+loop 持续读取 (直到连接断开)
+    alt 有新日志到达
+        reader_list -> reader_thread : TriggerReader()\ncondition_variable 通知
+        reader_thread -> logbuf : FlushTo(writer_, flush_state_, filter)
+        logbuf -> socket_writer : 新日志 Flush → sendDatav()
+    else 无新日志
+        reader_thread -> reader_thread : wait(condition_variable)\n等待新日志通知
+    end
+end
+
+== 8. logcat 接收日志数据 ==
+
+sock_logdr -> logdread : recv() → logger_entry + payload
+activate logdread
+
+logdread -> logdread : 解析 logger_entry\n提取 pid, tid, sec, nsec, len
+logdread -> logdread : 读取 tag + message payload
+
+logdread -> logcat : android_logger_list_read()\n返回 logger_entry + 数据
+deactivate logdread
+
+logcat -> logcat : 格式化输出\n[threadtime 格式]\n12-01 10:00:00.123 1234 5678 D Tag: msg
+
+== 9. PmsgRead 路径 (pstore 恢复) ==
+
+... 设备重启后，读取上次启动日志 ...
+
+logcat -> pmsgread : PmsgRead::Open()
+activate pmsgread
+
+pmsgread -> pstore : open(\n"/sys/fs/pstore/pmsg-ramoops-0")
+activate pstore
+
+loop 读取 pstore 文件
+    pmsgread -> pstore : read() → logger_entry + payload
+    pstore -> pmsgread : 返回持久化日志数据
+    pmsgread -> logcat : 返回 logger_entry\n[上次启动的日志]
+end
+
+deactivate pstore
+deactivate pmsgread
+
+note over logcat
+  pstore 读取场景:
+  - 设备重启后获取上次日志
+  - kernel panic 日志恢复
+  - logcat -L (last / pstore 模式)
+end note
+
+== 10. 命令控制 (CommandListener 路径) ==
+
+... logcat 通过 /dev/socket/logd 发送管理命令 ...
+
+logcat -> cmd_socket : **[/dev/socket/logd]**\n发送命令
+activate cmd_socket
+
+note over cmd_socket
+  支持的命令:
+  clear <log_id>       - 清除缓冲区
+  getLogSize <log_id>  - 获取缓冲区大小
+  setLogSize <log_id>  - 设置缓冲区大小
+  getStatistics        - 获取统计信息
+  getPruneList         - 获取裁剪规则
+  setPruneList <rules> - 设置裁剪规则
+  getEventTag <tag>    - 获取事件标签
+  reinit               - 重新初始化
+end note
+
+cmd_socket -> logbuf : GetBufSize / SetBufSize / Clear
+logbuf -> cmd_socket : 返回结果
+cmd_socket -> logcat : 返回命令响应
+deactivate cmd_socket
+
+== 11. 清理与关闭 ==
+
+logcat -> logcat : android_logger_list_free()
+
+logcat -> logdread : Close()\nclose(socket)
+deactivate logdread
+
+logcat -> pmsgread : Close()\nclose(fd)
+
+logcat -> reader_thread : Release()
+deactivate reader_thread
+
+reader_thread -> socket_writer : Shutdown()
+deactivate socket_writer
+
+reader_thread -> reader_list : RemoveRunningThread()
+deactivate reader_list
+
+note over logcat : logcat 进程退出\n所有连接和资源释放
+
+@enduml

@@ -1,0 +1,550 @@
+@startuml logd_class_diagram
+
+' ====== 样式设置 ======
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam defaultFontSize 11
+skinparam classFontSize 12
+skinparam classFontStyle bold
+
+title Android logd 源码类图\n(system/logging/logd)
+
+' ====== 外部框架类 ======
+package "Android System Framework" #DDDDFF {
+    abstract class SocketListener {
+        + startListener() : int
+        # onDataAvailable(SocketClient*) : bool
+    }
+    class FrameworkListener {
+    }
+    abstract class FrameworkCommand {
+        + runCommand(SocketClient*, int, char**) : int
+    }
+    class SocketClient {
+        + getUid() : uid_t
+        + getSocket() : int
+        + sendDatav(iovec*, int) : int
+    }
+    abstract class BnLogd <<AIDL Stub>> {
+        + approve(int32_t, int32_t, int32_t, int32_t) : Status
+        + decline(int32_t, int32_t, int32_t, int32_t) : Status
+    }
+    SocketListener <|-- FrameworkListener
+}
+
+' ====== 核心日志缓冲区体系 ======
+package "Log Buffer Hierarchy" #FFFFDD {
+
+    abstract class LogBuffer {
+        + {abstract} Init() : void
+        + {abstract} Log(log_id_t, log_time, uid_t, pid_t, tid_t, const char*, uint16_t) : int
+        + {abstract} CreateFlushToState(uint64_t start, LogMask) : unique_ptr<FlushToState>
+        + {abstract} FlushTo(LogWriter*, FlushToState&, filter) : bool
+        + {abstract} Clear(log_id_t, uid_t) : bool
+        + {abstract} GetSize(log_id_t) : size_t
+        + {abstract} SetSize(log_id_t, size_t) : bool
+        + {abstract} sequence() : uint64_t
+    }
+
+    class SimpleLogBuffer {
+        - reader_list_ : LogReaderList*
+        - tags_ : LogTags*
+        - stats_ : LogStatistics*
+        - sequence_ : atomic<uint64_t>
+        - max_size_ : size_t[LOG_ID_MAX]
+        - logs_ : list<LogBufferElement>
+        + Init() : void <<final>>
+        + Log(..) : int
+        + FlushTo(..) : bool
+        + SetSize(..) : bool <<final>>
+        # Prune(log_id_t, ulong, uid_t) : bool <<virtual>>
+    }
+
+    class RecordingLogBuffer {
+        - since_boot_messages_ : vector<pair<RecordedLogMessage, string>>
+        - fd_ : unique_fd
+        + Log(..) : int
+    }
+
+    class SerializedLogBuffer <<final>> {
+        - reader_list_ : LogReaderList*
+        - tags_ : LogTags*
+        - stats_ : LogStatistics*
+        - max_size_ : size_t[LOG_ID_MAX]
+        - logs_ : list<SerializedLogChunk>[LOG_ID_MAX]
+        - sequence_ : atomic<uint64_t>
+        + Init() : void
+        + Log(..) : int
+        + FlushTo(..) : bool
+    }
+
+    LogBuffer <|-- SimpleLogBuffer
+    SimpleLogBuffer <|-- RecordingLogBuffer
+    LogBuffer <|-- SerializedLogBuffer
+}
+
+' ====== FlushToState 体系 ======
+package "Flush State" #FFDDFF {
+
+    class FlushToState {
+        - start_ : uint64_t
+        - log_mask_ : LogMask
+        + start() : uint64_t
+        + set_start(uint64_t) : void
+        + log_mask() : LogMask
+    }
+
+    class SerializedFlushToState {
+        - logs_ : list<SerializedLogChunk>*
+        - log_positions_ : optional<LogPosition>[LOG_ID_MAX]
+        - logs_needed_from_next_position_ : bitset<LOG_ID_MAX>
+        + HasUnreadLogs() : bool
+        + PopNextUnreadLog() : LogWithId
+        + Prune(log_id_t) : void
+    }
+
+    FlushToState <|-- SerializedFlushToState
+}
+
+' ====== 日志条目 ======
+package "Log Entries" #DDFFDD {
+
+    class LogBufferElement <<packed>> {
+        - uid_ : uint32_t
+        - pid_ : uint32_t
+        - tid_ : uint32_t
+        - sequence_ : uint64_t
+        - realtime_ : log_time
+        - msg_ : char*
+        - msg_len_ : uint16_t
+        - log_id_ : uint8_t
+        + FlushTo(LogWriter*) : bool
+        + ToLogStatisticsElement() : LogStatisticsElement
+    }
+
+    class SerializedLogEntry <<packed>> {
+        - uid_ : uint32_t
+        - pid_ : uint32_t
+        - tid_ : uint32_t
+        - sequence_ : uint64_t
+        - realtime_ : log_time
+        - msg_len_ : uint16_t
+        + Flush(LogWriter*, log_id_t) : bool
+        + ToLogStatisticsElement(log_id_t) : LogStatisticsElement
+        + msg() : char*
+    }
+
+    class SerializedLogChunk {
+        - contents_ : SerializedData
+        - write_offset_ : int
+        - reader_ref_count_ : uint32_t
+        - writer_active_ : bool
+        - highest_sequence_number_ : uint64_t
+        - compressed_log_ : SerializedData
+        - readers_ : vector<SerializedFlushToState*>
+        + FinishWriting() : void
+        + CanLog(size_t) : bool
+        + Log(..) : SerializedLogEntry*
+        + AttachReader(SerializedFlushToState*) : void
+        + DetachReader(SerializedFlushToState*) : void
+        + NotifyReadersOfPrune(log_id_t) : void
+    }
+
+    class SerializedData {
+        - data_ : unique_ptr<uint8_t[]>
+        - size_ : size_t
+        + data() : uint8_t*
+        + size() : size_t
+        + Resize(size_t) : void
+    }
+
+    class RecordedLogMessage <<packed>> {
+        uid : uint32_t
+        pid : uint32_t
+        tid : uint32_t
+        realtime : log_time
+        msg_len : uint16_t
+        log_id : uint8_t
+    }
+}
+
+' ====== LogWriter 体系 ======
+package "Log Writers" #FFEEDD {
+
+    abstract class LogWriter {
+        - uid_ : uid_t
+        - privileged_ : bool
+        + {abstract} Write(const logger_entry&, const char*) : bool
+        + {abstract} name() : string
+        + Shutdown() : void
+        + Release() : void
+        + uid() : uid_t
+        + privileged() : bool
+        + revoke() : void
+    }
+
+    class SocketLogWriter {
+        - reader_ : LogReader*
+        - client_ : SocketClient*
+        + Write(const logger_entry&, const char*) : bool
+        + Release() : void
+        + Shutdown() : void
+        + name() : string
+    }
+
+    class StdoutWriter {
+        + Write(const logger_entry&, const char*) : bool
+        + name() : string
+    }
+
+    class TestWriter {
+        + Write(const logger_entry&, const char*) : bool
+        + name() : string
+    }
+
+    LogWriter <|-- SocketLogWriter
+    LogWriter <|-- StdoutWriter
+    LogWriter <|-- TestWriter
+}
+
+' ====== Socket 监听器体系 ======
+package "Socket Listeners" #EEDDFF {
+
+    class LogReader {
+        - log_buffer_ : LogBuffer*
+        - reader_list_ : LogReaderList*
+        # onDataAvailable(SocketClient*) : bool
+    }
+
+    class LogKlog {
+        - logbuf : LogBuffer*
+        - signature : log_time
+        - initialized : bool
+        - auditd : bool
+        - stats_ : LogStatistics*
+        + log(const char*, ssize_t) : int
+        + {static} convertMonotonicToReal(log_time&) : void
+        # onDataAvailable(SocketClient*) : bool
+    }
+
+    class LogAudit {
+        - logbuf : LogBuffer*
+        - fdDmesg : int
+        - main : bool
+        - events : bool
+        - initialized : bool
+        - stats_ : LogStatistics*
+        + log(char*, size_t) : int
+        # onDataAvailable(SocketClient*) : bool
+    }
+
+    class TrustyLog {
+        - logbuf : LogBuffer*
+        + {static} create(LogBuffer*) : void
+        # onDataAvailable(SocketClient*) : bool
+    }
+
+    class LogListener {
+        - socket_ : int
+        - logbuf_ : LogBuffer*
+        + StartListener() : bool
+        - ThreadFunction() : void
+        - HandleData() : void
+    }
+
+    SocketListener <|-- LogReader
+    SocketListener <|-- LogKlog
+    SocketListener <|-- LogAudit
+    SocketListener <|-- TrustyLog
+}
+
+' ====== 命令体系 ======
+package "Command System" #EEDDDD {
+
+    class CommandListener {
+        - buf_ : LogBuffer*
+        - tags_ : LogTags*
+        - prune_ : PruneList*
+        - stats_ : LogStatistics*
+    }
+
+    class ClearCmd
+    class GetBufSizeCmd
+    class SetBufSizeCmd
+    class GetBufSizeReadableCmd
+    class GetBufSizeUsedCmd
+    class GetStatisticsCmd
+    class GetPruneListCmd
+    class SetPruneListCmd
+    class GetEventTagCmd
+    class ReinitCmd
+    class ExitCmd
+
+    FrameworkListener <|-- CommandListener
+    FrameworkCommand <|-- ClearCmd
+    FrameworkCommand <|-- GetBufSizeCmd
+    FrameworkCommand <|-- SetBufSizeCmd
+    FrameworkCommand <|-- GetBufSizeReadableCmd
+    FrameworkCommand <|-- GetBufSizeUsedCmd
+    FrameworkCommand <|-- GetStatisticsCmd
+    FrameworkCommand <|-- GetPruneListCmd
+    FrameworkCommand <|-- SetPruneListCmd
+    FrameworkCommand <|-- GetEventTagCmd
+    FrameworkCommand <|-- ReinitCmd
+    FrameworkCommand <|-- ExitCmd
+
+    CommandListener *-- ClearCmd
+    CommandListener *-- GetBufSizeCmd
+    CommandListener *-- SetBufSizeCmd
+    CommandListener *-- GetBufSizeReadableCmd
+    CommandListener *-- GetBufSizeUsedCmd
+    CommandListener *-- GetStatisticsCmd
+    CommandListener *-- GetPruneListCmd
+    CommandListener *-- SetPruneListCmd
+    CommandListener *-- GetEventTagCmd
+    CommandListener *-- ReinitCmd
+    CommandListener *-- ExitCmd
+}
+
+' ====== Reader 管理 ======
+package "Reader Management" #DDEEDD {
+
+    class LogReaderThread {
+        - log_buffer_ : LogBuffer*
+        - reader_list_ : LogReaderList*
+        - writer_ : unique_ptr<LogWriter>
+        - flush_to_state_ : unique_ptr<FlushToState>
+        - pid_ : pid_t
+        - tail_ : unsigned long
+        - start_time_ : log_time
+        - deadline_ : steady_clock::time_point
+        - non_block_ : bool
+        - release_ / finished_ / tracked_ : bool
+        - skip_ahead_ : unsigned int[LOG_ID_MAX]
+        - thread_triggered_condition_ : condition_variable
+        + Run() : void
+        + TriggerReader() : void
+        + Revoke() : void
+        + Release() : void
+        + IsWatching(log_id_t) : bool
+    }
+
+    class LogReaderList {
+        - running_reader_threads_ : list<unique_ptr<LogReaderThread>>
+        - pending_reader_threads_ : vector<unique_ptr<LogReaderThread>>
+        + NotifyNewLog(LogMask) : void
+        + AddAndRunThread(unique_ptr<LogReaderThread>) : void
+        + RemoveRunningThread(LogReaderThread*) : void
+        + AddPendingThread(unique_ptr<LogReaderThread>) : void
+        + HandlePendingThread(uid_t, gid_t, pid_t, int32_t, bool) : bool
+    }
+}
+
+' ====== 统计体系 ======
+package "Statistics" #DDFFFF {
+
+    class LogStatistics {
+        - mSizes[LOG_ID_MAX] : size_t
+        - mElements[LOG_ID_MAX] : size_t
+        - uidTable[LOG_ID_MAX] : LogHashtable<uid_t, UidEntry>
+        - pidSystemTable[LOG_ID_MAX] : LogHashtable<pid_t, PidEntry>
+        - pidTable : LogHashtable<pid_t, PidEntry>
+        - tidTable : LogHashtable<pid_t, TidEntry>
+        - tagTable : LogHashtable<uint32_t, TagEntry>
+        - tagNameTable : LogHashtable<string, TagNameEntry>
+        - lock_ : mutex
+        + Add(LogStatisticsElement) : void
+        + Subtract(LogStatisticsElement) : void
+        + ShouldPrune(log_id, ulong, ulong*) : bool
+        + Format(uid_t, pid_t, uint) : string
+        + PidToName(pid_t) : const char*
+        + UidToName(uid_t) : const char*
+    }
+
+    class EntryBase {
+        - size_ : size_t
+        + getSizes() : size_t
+        + Add(LogStatisticsElement) : void
+        + Subtract(LogStatisticsElement) : bool
+    }
+
+    class UidEntry
+    class PidEntry {
+        - uid_ : uid_t
+        - name_ : char*
+    }
+    class TidEntry
+    class TagEntry
+    class TagNameEntry
+
+    class LogHashtable<TKey, TEntry> {
+        - map : unordered_map<TKey, TEntry>
+        + Add(TKey, LogStatisticsElement) : iterator
+        + Subtract(TKey, LogStatisticsElement) : void
+        + sizeOf() : size_t
+    }
+
+    EntryBase <|-- UidEntry
+    EntryBase <|-- PidEntry
+    EntryBase <|-- TidEntry
+    EntryBase <|-- TagEntry
+    EntryBase <|-- TagNameEntry
+}
+
+' ====== 标签与裁剪 ======
+package "Tags & Pruning" #FFE8E8 {
+
+    class LogTags {
+        - rwlock : RWLock
+        - key2tag : unordered_map<string, uint32_t>
+        - tag2uid : unordered_map<uint32_t, uid_list>
+        - tag2name : unordered_map<uint32_t, string>
+        - tag2format : unordered_map<uint32_t, string>
+        + tagToName(uint32_t) : const char*
+        + tagToFormat(uint32_t) : const char*
+        + nameToTag(const char*) : uint32_t
+        + formatGetEventTag(uid_t, const char*, const char*) : string
+    }
+
+    class PruneList {
+        - high_priority_prune_ : list<Prune>
+        - low_priority_prune_ : list<Prune>
+        - worst_uid_enabled_ : bool
+        - worst_pid_of_system_enabled_ : bool
+        + Init(const char*) : bool
+        + Format() : string
+        + IsHighPriority(LogBufferElement*) : bool
+        + IsLowPriority(LogBufferElement*) : bool
+    }
+
+    class Prune {
+        - uid_ : uid_t
+        - pid_ : pid_t
+        + Matches(LogBufferElement*) : bool
+        + Format() : string
+    }
+}
+
+' ====== 压缩引擎 ======
+package "Compression" #EEEEFF {
+
+    abstract class CompressionEngine {
+        + {static} GetInstance() : CompressionEngine&
+        + {abstract} Compress(SerializedData&, size_t, SerializedData&) : bool
+        + {abstract} Decompress(SerializedData&, SerializedData&) : bool
+    }
+
+    class ZlibCompressionEngine {
+        + Compress(..) : bool
+        + Decompress(..) : bool
+    }
+
+    class ZstdCompressionEngine {
+        + Compress(..) : bool
+        + Decompress(..) : bool
+    }
+
+    CompressionEngine <|-- ZlibCompressionEngine
+    CompressionEngine <|-- ZstdCompressionEngine
+}
+
+' ====== Binder 服务 ======
+package "Binder Service" #E8E8FF {
+    class LogdNativeService {
+        - reader_list_ : LogReaderList*
+        + approve(int32_t, int32_t, int32_t, int32_t) : Status
+        + decline(int32_t, int32_t, int32_t, int32_t) : Status
+    }
+    BnLogd <|-- LogdNativeService
+}
+
+' ====== 组合与关联关系 ======
+
+' SimpleLogBuffer 持有 LogBufferElement 列表
+SimpleLogBuffer *-- "0..*" LogBufferElement : logs_
+
+' SimpleLogBuffer 关联
+SimpleLogBuffer --> LogReaderList : reader_list_
+SimpleLogBuffer --> LogTags : tags_
+SimpleLogBuffer --> LogStatistics : stats_
+
+' SerializedLogBuffer 持有 SerializedLogChunk 列表
+SerializedLogBuffer *-- "0..*" SerializedLogChunk : logs_[LOG_ID_MAX]
+
+' SerializedLogBuffer 关联
+SerializedLogBuffer --> LogReaderList : reader_list_
+SerializedLogBuffer --> LogTags : tags_
+SerializedLogBuffer --> LogStatistics : stats_
+
+' SerializedLogChunk 组合
+SerializedLogChunk *-- "2" SerializedData : contents_ + compressed_log_
+
+' SerializedLogChunk 关联 reader 列表
+SerializedLogChunk --> "0..*" SerializedFlushToState : readers_
+
+' LogReaderList 拥有 LogReaderThread
+LogReaderList *-- "0..*" LogReaderThread : running_ + pending_
+
+' LogReaderThread 拥有 LogWriter 和 FlushToState
+LogReaderThread *-- "1" LogWriter : writer_
+LogReaderThread *-- "1" FlushToState : flush_to_state_
+
+' LogReaderThread 关联
+LogReaderThread --> LogBuffer : log_buffer_
+LogReaderThread --> LogReaderList : reader_list_
+
+' LogReader 关联
+LogReader --> LogBuffer : log_buffer_
+LogReader --> LogReaderList : reader_list_
+
+' SocketLogWriter 关联
+SocketLogWriter --> LogReader : reader_
+SocketLogWriter --> SocketClient : client_
+
+' LogListener 关联
+LogListener --> LogBuffer : logbuf_
+
+' LogKlog 关联
+LogKlog --> LogBuffer : logbuf
+LogKlog --> LogStatistics : stats_
+
+' LogAudit 关联
+LogAudit --> LogBuffer : logbuf
+LogAudit --> LogStatistics : stats_
+
+' TrustyLog 关联
+TrustyLog --> LogBuffer : logbuf
+
+' CommandListener 关联
+CommandListener --> LogBuffer : buf_
+CommandListener --> LogTags : tags_
+CommandListener --> PruneList : prune_
+CommandListener --> LogStatistics : stats_
+
+' LogdNativeService 关联
+LogdNativeService --> LogReaderList : reader_list_
+
+' PruneList 组合
+PruneList *-- "0..*" Prune : high_ + low_priority_
+
+' LogStatistics 组合哈希表
+LogStatistics *-- LogHashtable
+
+' LogBufferElement / SerializedLogEntry 使用 LogWriter
+LogBufferElement ..> LogWriter : <<uses>>
+SerializedLogEntry ..> LogWriter : <<uses>>
+
+' LogBuffer 使用 LogWriter 和 FlushToState
+LogBuffer ..> LogWriter : <<uses>>
+LogBuffer ..> FlushToState : <<creates>>
+
+' RecordingLogBuffer 聚合
+RecordingLogBuffer o-- "0..*" RecordedLogMessage : since_boot_messages_
+
+' SerializedFlushToState 引用
+SerializedFlushToState --> SerializedLogChunk : logs_*
+
+' CompressionEngine 被 SerializedLogChunk 使用
+SerializedLogChunk ..> CompressionEngine : <<uses>>
+
+@enduml

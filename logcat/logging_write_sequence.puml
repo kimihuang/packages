@@ -1,0 +1,160 @@
+@startuml logging_write_sequence
+
+' ====== 样式设置 ======
+skinparam maxMessageSize 150
+skinparam ParticipantPadding 10
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+
+title Android Logging 日志写入时序图\n(App → liblog → logd → 读者通知)
+
+autonumber
+
+' ====== 参与者 ======
+participant "App\n(Java/C++/Rust)" as app order 10
+participant "android.util.Log\n(JNI)" as jni order 20
+participant "__android_log_buf_write\n(logger_write.cpp)" as api_entry order 30
+participant "__android_log_write\n_log_message()\n(logger_write.cpp)" as write_msg order 40
+participant "TransportWrite\nRegistry" as registry order 50
+participant "LogdWrite\n(logd_writer.cpp)" as logdwrite order 60
+participant "PmsgWrite\n(pmsg_writer.cpp)" as pmsgwrite order 70
+participant "/dev/socket/logdw\n(SOCK_DGRAM)" as sock_logdw order 80
+participant "/dev/pmsg0\n(pstore)" as dev_pmsg order 90
+participant "LogListener\n(logd)" as loglistener order 100
+participant "LogBuffer\n(Serialized/Simple)" as logbuf order 110
+participant "SerializedLogChunk" as logchunk order 120
+participant "LogStatistics" as logstats order 130
+participant "PruneList" as prunelist order 140
+participant "LogReaderList" as reader_list order 150
+participant "LogReaderThread" as reader_thread order 160
+participant "SocketLogWriter" as socket_writer order 170
+participant "/dev/socket/logdr" as sock_logdr order 180
+participant "Logcat / App" as consumer order 190
+
+== 1. 应用层日志调用 ==
+
+app -> jni : Log.d(TAG, msg)\n[Java 路径]
+app -> api_entry : __android_log_write(prio, tag, msg)\n[Native 路径]
+
+jni -> api_entry : __android_log_buf_write(LOG_ID_MAIN, prio, tag, msg)
+
+== 2. liblog 内部路由 ==
+
+api_entry -> api_entry : 构造 LogMessage{\n  log_id=LOG_ID_MAIN,\n  prio=ANDROID_LOG_DEBUG,\n  ts=clock_gettime(),\n  tag, message\n}
+
+api_entry -> write_msg : __android_log_write_log_message(&LogMessage)
+
+write_msg -> write_msg : 遍历已注册的 logger 函数\n[__android_log_logd_logger,\n __android_log_pmsg_logger]
+
+== 3. LogdWrite 传输路径 ==
+
+write_msg -> logdwrite : __android_log_logd_logger(LogMessage)
+activate logdwrite
+
+logdwrite -> logdwrite : 首次调用? → Init()\nsocket(AF_UNIX, SOCK_DGRAM)
+
+logdwrite -> logdwrite : 构造 iovec[]:\n  [0] = android_log_header_t\n      {id=LOG_ID_MAIN, tid, prio}\n  [1] = tag\n  [2] = message
+
+logdwrite -> sock_logdw : writev(fd, iovec, 3)\n+ SCM_CREDENTIALS {uid, pid, gid}
+note right of sock_logdw : SOCK_DGRAM 无连接\n单次 writev 原子写入
+
+deactivate logdwrite
+
+== 4. PmsgWrite 传输路径 (并行) ==
+
+write_msg -> pmsgwrite : __android_log_pmsg_logger(LogMessage)
+activate pmsgwrite
+
+pmsgwrite -> pmsgwrite : 首次调用? → Init()\nopen("/dev/pmsg0")
+
+pmsgwrite -> pmsgwrite : 构造 iovec[]:\n  [0] = logger_entry {pid, tid, sec, nsec, len}\n  [1] = android_log_header_t\n  [2] = tag + message
+
+pmsgwrite -> dev_pmsg : writev(fd, iovec, 3)
+note right of dev_pmsg : 写入 pstore RAM\n重启后可从\n/sys/fs/pstore/ 恢复
+
+deactivate pmsgwrite
+
+== 5. logd 接收日志 (LogListener) ==
+
+sock_logdw -> loglistener : 数据到达 (epoll 唤醒)
+activate loglistener
+
+loglistener -> loglistener : HandleData()\nrecvmsg() + SCM_CREDENTIALS
+
+loglistener -> loglistener : 解析 android_log_header_t\n提取 log_id, prio\n验证 uid/pid/gid
+
+loglistener -> logbuf : Log(log_id, realtime, uid, pid, tid, msg, len)
+activate logbuf
+
+== 6. 日志缓冲区存储 ==
+
+logbuf -> logchunk : SerializedLogBuffer::Log()\n当前 chunk 空间足够?
+activate logchunk
+
+alt 当前 chunk 可容纳
+    logchunk -> logchunk : Log(..) → SerializedLogEntry\n写入 contents_\n更新 write_offset_
+else 当前 chunk 已满
+    logchunk -> logchunk : FinishWriting()\n压缩 compressed_log_
+    logchunk -> logchunk : 创建新 SerializedLogChunk\n追加到 logs_[log_id]
+    logchunk -> logchunk : Log(..) → 新 entry
+end
+
+logchunk -> logstats : Add(LogStatisticsElement)\n更新 uidTable, pidTable 等
+
+logbuf -> logbuf : sequence_++ (原子递增)
+
+logbuf -> prunelist : 缓冲区超限?\nShouldPrune() 检查
+
+alt 需要裁剪
+    logbuf -> logbuf : Prune(log_id, size)\n根据 PruneList 规则\n优先删除低优先级日志
+    logchunk -> logchunk : NotifyReadersOfPrune(log_id)
+end
+
+deactivate logchunk
+deactivate logbuf
+deactivate loglistener
+
+== 7. 通知读者线程 ==
+
+logbuf -> reader_list : NotifyNewLog(log_mask)
+activate reader_list
+
+reader_list -> reader_thread : 遍历 running_reader_threads_\n触发 condition_variable
+activate reader_thread
+
+reader_thread -> reader_thread : Run() 被唤醒
+
+== 8. 读者线程输出日志 ==
+
+reader_thread -> logbuf : FlushTo(writer_, flush_to_state_, filter)
+activate logbuf
+
+logbuf -> logchunk : 遍历 SerializedLogChunk\n从 flush_to_state_.start_ 开始
+activate logchunk
+
+loop 每个 SerializedLogEntry
+    logchunk -> socket_writer : SerializedLogEntry::Flush(writer, log_id)
+    activate socket_writer
+
+    socket_writer -> socket_writer : 构造 logger_entry + payload\n写入 SocketClient
+end
+
+deactivate logchunk
+deactivate logbuf
+
+socket_writer -> sock_logdr : sendDatav(iovec[])\nlogger_entry + tag + msg
+deactivate socket_writer
+
+sock_logdr -> consumer : 读取 logger_entry\n+ payload 数据
+deactivate reader_thread
+deactivate reader_list
+
+consumer -> consumer : 解析日志条目\n格式化输出
+
+note over consumer
+  logcat 输出格式示例:
+  12-01 10:00:00.123  1234  5678 D Tag  : message
+  date  time.pid  tid  prio tag : msg
+end note
+
+@enduml

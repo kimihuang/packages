@@ -1,0 +1,474 @@
+@startuml liblog_class_diagram
+
+' ====== 样式设置 ======
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam defaultFontSize 11
+skinparam classFontSize 12
+skinparam classFontStyle bold
+
+title Android liblog 源码类图\n(system/logging/liblog)
+
+' ====== 公共 API 枚举与结构 ======
+package "Public API Types (android/log.h)" #DDFFDD {
+
+    enum android_LogPriority {
+        ANDROID_LOG_UNKNOWN = 0
+        ANDROID_LOG_DEFAULT
+        ANDROID_LOG_VERBOSE
+        ANDROID_LOG_DEBUG
+        ANDROID_LOG_INFO
+        ANDROID_LOG_WARN
+        ANDROID_LOG_ERROR
+        ANDROID_LOG_FATAL
+        ANDROID_LOG_SILENT = 8
+    }
+
+    enum log_id_t {
+        LOG_ID_MIN = 0
+        LOG_ID_MAIN = 0
+        LOG_ID_RADIO = 1
+        LOG_ID_EVENTS = 2
+        LOG_ID_SYSTEM = 3
+        LOG_ID_CRASH = 4
+        LOG_ID_STATS = 5
+        LOG_ID_SECURITY = 6
+        LOG_ID_KERNEL = 7
+        LOG_ID_MAX
+    }
+
+    struct logger_entry {
+        __uint16_t len
+        __uint16_t hdr_size
+        __int32_t pid
+        __int32_t tid
+        __uint32_t sec
+        __uint32_t nsec
+    }
+
+    struct android_log_header_t {
+        log_id_t id
+        uint16_t tid
+        android_LogPriority prio
+    }
+
+    struct android_log_message_int_t {
+        struct android_log_message body
+        int32_t arg1
+        int32_t arg2
+    }
+
+    class android_log_event_list {
+        - ctx_ : android_log_context
+        - ret_ : int
+        + android_log_event_list(int tag)
+        + ~android_log_event_list()
+        + operator<<(int32_t val) : android_log_event_list&
+        + operator<<(uint32_t val) : android_log_event_list&
+        + operator<<(int64_t val) : android_log_event_list&
+        + operator<<(uint64_t val) : android_log_event_list&
+        + operator<<(const char* val) : android_log_event_list&
+        + operator<<(const std::string& val) : android_log_event_list&
+        + operator<<(float val) : android_log_event_list&
+        + begin() : android_log_event_list&
+        + end() : int
+    }
+}
+
+' ====== 内部日志消息结构 ======
+package "Internal Log Message (logger_write.h)" #FFFFDD {
+
+    class LogMessage {
+        + log_id : log_id_t
+        + prio : android_LogPriority
+        + ts : timespec
+        + tag : const char*
+        + file : const char*
+        + line : unsigned int
+        + message : const char*
+        + message_len : size_t
+    }
+
+    note right of LogMessage
+      内部使用的日志消息表示，
+      由 __android_log_write_log_message() 路由到各 transport
+    end note
+}
+
+' ====== 写入传输层抽象 ======
+package "Write Transport Layer" #FFEEDD {
+
+    struct android_log_transport_write {
+        + name : const char*
+        + logMask : uint32_t
+        + logId : log_id_t
+        + context : void*
+        + +open() : int <<function pointer>>
+        + +close() : int <<function pointer>>
+        + +write(log_id_t, struct timespec*, struct iovec*, int) : int <<function pointer>>
+    }
+
+    note right of android_log_transport_write
+      传输层抽象结构体，使用函数指针实现多态。
+      每个 writer 注册一个此结构体实例。
+    end note
+
+    class LogdWrite {
+        - logdSocket : int
+        - logdSockType : int
+        - logdLogType : int
+        + LogdWrite()
+        + ~LogdWrite()
+        + Init() : int
+        + Write(log_id_t, struct timespec*, struct iovec*, int) : int
+        + Close() : int
+        + ReConnect() : int
+        - WriteLogd(android_log_header_t*, const char*, size_t) : int
+        - WriteLogdGeneric(android_log_header_t*, const char*, size_t) : int
+    }
+
+    class PmsgWrite {
+        - pmsgFd : int
+        + PmsgWrite()
+        + ~PmsgWrite()
+        + Init() : int
+        + Write(log_id_t, struct timespec*, struct iovec*, int) : int
+        + Close() : int
+    }
+
+    note right of LogdWrite
+      通过 /dev/socket/logdw (SOCK_DGRAM)
+      发送日志到 logd 守护进程。
+      支持 passcred 认证。
+    end note
+
+    note right of PmsgWrite
+      通过 /dev/pmsg0 写入 pstore，
+      实现日志持久化（重启后可恢复）。
+    end note
+}
+
+' ====== 读取传输层抽象 ======
+package "Read Transport Layer" #EEDDFF {
+
+    struct android_log_transport_read {
+        + name : const char*
+        + logMask : uint32_t
+        + context : void*
+        + +open() : int <<function pointer>>
+        + +close() : int <<function pointer>>
+        + +read(log_id_t, struct logger_entry*, char*, size_t) : int <<function pointer>>
+        + +clear(log_id_t) : int <<function pointer>>
+        + +setSize(log_id_t, unsigned long) : int <<function pointer>>
+        + +getSize(log_id_t) : unsigned long <<function pointer>>
+        + +getReadableSize(log_id_t) : unsigned long <<function pointer>>
+    }
+
+    note right of android_log_transport_read
+      读取传输层抽象结构体，
+      用于 logcat 等工具读取日志。
+    end note
+
+    class LogdRead {
+        - logFd : int
+        - context : void*
+        + LogdRead()
+        + ~LogdRead()
+        + Open() : int
+        + Close() : int
+        + Read(log_id_t, struct logger_entry*, char*, size_t) : int
+        + Clear(log_id_t) : int
+        + SetSize(log_id_t, unsigned long) : int
+        + GetSize(log_id_t) : unsigned long
+        + GetReadableSize(log_id_t) : unsigned long
+    }
+
+    class PmsgRead {
+        - pmsgFd : int
+        - context : void*
+        + PmsgRead()
+        + ~PmsgRead()
+        + Open() : int
+        + Close() : int
+        + Read(log_id_t, struct logger_entry*, char*, size_t) : int
+    }
+
+    note right of LogdRead
+      通过 /dev/socket/logdr (SOCK_SEQPACKET)
+      从 logd 守护进程读取日志。
+    end note
+
+    note right of PmsgRead
+      从 /sys/fs/pstore/pmsg-ramoops-0
+      读取上次启动的持久化日志。
+    end note
+}
+
+' ====== Event 日志 ======
+package "Event Logging (log_event_list)" #FFDDFF {
+
+    class EventTagMap <<final>> {
+        - fd_ : int
+        - base_ : const char*
+        - len_ : size_t
+        - tagArray_ : EventTag*
+        - numTags_ : size_t
+        - cache_ : EventTagCache
+        - lock_ : std::mutex
+        + EventTagMap(const char* filename)
+        + ~EventTagMap()
+        + getTag(int tag) : const char*
+        + getFormat(int tag) : const char*
+        + getName(int tag) : const char*
+        - ParseLine() : bool
+        - FindTag(int tag) : EventTag*
+        - AddTag(int, const char*, const char*) : bool
+    }
+
+    struct EventTag {
+        tag : uint32_t
+        name : const char*
+        format : const char*
+    }
+
+    struct EventTagCache {
+        entries_ : std::unordered_map<uint32_t, EventTag*>
+    }
+
+    class android_log_context {
+        - fd_ : int
+        - tag_ : uint32_t
+        - buf_ : uint8_t*
+        - bufPos_ : size_t
+        - bufSize_ : size_t
+        - error_ : bool
+        - list_ : bool
+        - overflow_ : bool
+    }
+
+    note right of EventTagMap
+      解析 /system/etc/event-log-tags 文件，
+      将 event tag number 映射到名称和格式。
+    end note
+
+    note right of android_log_context
+      不透明上下文，用于构建二进制
+      event log 消息 (android_log_write)。
+    end note
+}
+
+' ====== 配置与传输管理 ======
+package "Transport Management (config_write/read)" #E0E0E0 {
+
+    class TransportWriteRegistry {
+        - transports_ : android_log_transport_write*[LOG_ID_MAX]
+        - transportCount_ : int
+        - lock_ : std::mutex
+        + Register(android_log_transport_write*) : void
+        + Write(log_id_t, struct timespec*, struct iovec*, int) : int
+        + Close() : void
+        + ReInit() : void
+        + SetDefaultTransport(android_log_transport_write*) : void
+    }
+
+    class TransportReadRegistry {
+        - transports_ : android_log_transport_read*
+        - transportCount_ : int
+        - lock_ : std::mutex
+        + Register(android_log_transport_read*) : void
+        + Read(log_id_t, struct logger_entry*, char*, size_t) : int
+        + Clear(log_id_t) : int
+        + SetSize(log_id_t, unsigned long) : int
+        + GetSize(log_id_t) : unsigned long
+    }
+
+    note right of TransportWriteRegistry
+      管理所有已注册的写入传输层，
+      日志写入时遍历所有 transport。
+    end note
+
+    note right of TransportReadRegistry
+      管理所有已注册的读取传输层，
+      logcat 等工具通过此读取日志。
+    end note
+}
+
+' ====== 日志属性与安全配置 ======
+package "Properties & Security" #E8FFE8 {
+
+    class LogProperties {
+        - is_debuggable_ : bool
+        - security_enabled_ : bool
+        - logd_logger_type_ : int
+        - logd_buffer_size_kb_ : int
+        + IsDebuggable() : bool
+        + IsSecurityEnabled() : bool
+        + GetLogdLoggerType() : int
+        + GetBufferSizeKb(log_id_t) : int
+        + Update() : void
+        - ReadProperty(const char*, const char*) : std::string
+    }
+
+    note right of LogProperties
+      读取系统属性 (ro.debuggable, 
+      persist.logd.logpersistd 等)
+      配置日志行为。
+    end note
+}
+
+' ====== 锁与线程安全 ======
+package "Thread Safety (logger_lock)" #FFE8E8 {
+
+    class LogLock {
+        - lock_ : pthread_mutex_t
+        + Lock() : void
+        + Unlock() : void
+    }
+
+    note right of LogLock
+      用于保护 liblog 内部全局状态
+      的线程安全 ( transports 注册等 )。
+    end note
+}
+
+' ====== 公共 API 函数 ======
+package "Public API Functions (logger_write)" #DDDDFF {
+
+    class __android_log_write {
+        + {static} __android_log_write(int prio, const char* tag, const char* msg) : int
+        + {static} __android_log_print(int prio, const char* tag, const char* fmt, ...) : int
+        + {static} __android_log_buf_write(int bufID, int prio, const char* tag, const char* msg) : int
+        + {static} __android_log_buf_print(int bufID, int prio, const char* tag, const char* fmt, ...) : int
+        + {static} __android_log_vprint(int prio, const char* tag, const char* fmt, va_list ap) : int
+        + {static} __android_log_buf_vprint(int bufID, int prio, const char* tag, const char* fmt, va_list ap) : int
+        + {static} __android_log_assert(const char* cond, const char* tag, const char* fmt, ...) : void
+        + {static} __android_log_write_log_message(LogMessage*) : void
+        + {static} __android_log_logd_logger(const LogMessage&) : void
+        + {static} __android_log_pmsg_logger(const LogMessage&) : void
+    }
+
+    note right of __android_log_write
+      liblog 的核心公共 API 入口。
+      所有日志写入最终经过 
+      __android_log_write_log_message() 
+      路由到注册的传输层。
+    end note
+}
+
+' ====== 读取 API 函数 ======
+package "Reader API Functions (logger_read)" #DDFFFF {
+
+    class __android_log_read {
+        + {static} android_logger_open(logger_list*, log_id_t) : android_logger*
+        + {static} android_logger_list_alloc(int mode, unsigned int tail, pid_t pid) : logger_list*
+        + {static} android_logger_list_free(logger_list*) : void
+        + {static} android_logger_list_read(logger_list*, struct logger_entry*) : int
+        + {static} android_logger_clear(android_logger*) : int
+        + {static} android_logger_get_id(android_logger*) : log_id_t
+        + {static} android_logger_set_buffer_size(android_logger*, unsigned long) : int
+        + {static} android_logger_get_buffer_size(android_logger*) : unsigned long
+    }
+
+    class logger_list {
+        - mode_ : int
+        - tail_ : unsigned int
+        - pid_ : pid_t
+        - transports_ : android_log_transport_read*
+        - logger_ : android_logger*
+    }
+
+    class android_logger {
+        - id_ : log_id_t
+        - transport_ : android_log_transport_read*
+    }
+
+    note right of __android_log_read
+      logcat 工具使用的读取 API，
+      支持过滤 (tail/pid/mode) 和
+      多 transport 读取。
+    end note
+}
+
+' ====== 继承关系 ======
+' liblog 使用 C 语言风格的函数指针实现多态，没有真正的类继承
+
+' ====== 组合与关联关系 ======
+
+' LogMessage 被 API 函数使用
+__android_log_write ..> LogMessage : <<creates>>
+
+' API 函数通过 TransportWriteRegistry 路由
+__android_log_write ..> TransportWriteRegistry : <<uses>>
+
+' TransportWriteRegistry 管理 write transports
+TransportWriteRegistry *-- "0..*" android_log_transport_write : transports_
+
+' LogdWrite 和 PmsgWrite 实现了 android_log_transport_write 接口
+LogdWrite ..|> android_log_transport_write : <<implements>>
+PmsgWrite ..|> android_log_transport_write : <<implements>>
+
+' TransportReadRegistry 管理 read transports
+TransportReadRegistry *-- "0..*" android_log_transport_read : transports_
+
+' LogdRead 和 PmsgRead 实现了 android_log_transport_read 接口
+LogdRead ..|> android_log_transport_read : <<implements>>
+PmsgRead ..|> android_log_transport_read : <<implements>>
+
+' Read API 使用 TransportReadRegistry
+__android_log_read ..> TransportReadRegistry : <<uses>>
+
+' logger_list 包含 android_logger
+logger_list *-- "0..*" android_logger : logger_
+
+' android_logger 引用 transport
+android_logger --> android_log_transport_read : transport_
+
+' EventTagMap 组合
+EventTagMap *-- "0..*" EventTag : tagArray_
+EventTagMap *-- EventTagCache : cache_
+
+' android_log_event_list 拥有 context
+android_log_event_list *-- "1" android_log_context : ctx_
+
+' LogProperties 影响 writer 行为
+LogProperties ..> TransportWriteRegistry : <<configures>>
+
+' LogdWrite 使用 socket
+LogdWrite ..> logger_entry : <<writes>>
+LogdWrite ..> android_log_header_t : <<writes>>
+
+' PmsgWrite 使用 pmsg device
+PmsgWrite ..> logger_entry : <<writes>>
+
+' LogdRead 读取 logger_entry
+LogdRead ..> logger_entry : <<reads>>
+
+' PmsgRead 读取 logger_entry
+PmsgRead ..> logger_entry : <<reads>>
+
+' TransportWriteRegistry 使用 LogLock
+TransportWriteRegistry ..> LogLock : <<uses>>
+
+' TransportReadRegistry 使用 LogLock
+TransportReadRegistry ..> LogLock : <<uses>>
+
+' ====== 数据流注释 ======
+
+note as WriteFlow
+  **日志写入流程：**
+  App -> __android_log_print()
+       -> __android_log_write_log_message(LogMessage)
+       -> TransportWriteRegistry.Write()
+       -> LogdWrite::Write()    --> /dev/socket/logdw --> logd
+       -> PmsgWrite::Write()    --> /dev/pmsg0      --> pstore
+end note
+
+note as ReadFlow
+  **日志读取流程：**
+  logcat -> android_logger_list_read()
+         -> TransportReadRegistry.Read()
+         -> LogdRead::Read()    <-- /dev/socket/logdr <-- logd
+         -> PmsgRead::Read()    <-- /sys/fs/pstore/  <-- pstore
+end note
+
+@enduml

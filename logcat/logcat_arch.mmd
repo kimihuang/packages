@@ -1,0 +1,128 @@
+graph TB
+    subgraph APP["📱 Application Layer"]
+        JavaApp["Java App<br/>android.util.Log.d()"]
+        NativeApp["Native App<br/>ALOGD() / __android_log_write()"]
+        RustApp["Rust App<br/>liblogger::log()"]
+    end
+
+    subgraph FW["☕ Framework / Service Layer"]
+        LogJNI["Log JNI<br/>android_util_Log.cpp"]
+        LibLogFW["liblog.so<br/>(Framework)"]
+        LogManager["LogManager<br/>(System Service)"]
+    end
+
+    subgraph NATIVE["🔧 Native / HAL Layer"]
+        direction TB
+        subgraph LIBLOG["liblog.so (Native)"]
+            WriteEntry["__android_log_buf_write()<br/>logger_write.cpp"]
+            LogdLogger["__android_log_logd_logger()<br/>logger_write.cpp"]
+            WriteToLog["write_to_log()<br/>logger_write.cpp"]
+            LogdWrite["LogdWrite()<br/>logd_writer.cpp"]
+            PmsgWrite["PmsgWrite()<br/>pmsg_writer.cpp"]
+            LogdRead["LogdRead()<br/>logd_reader.cpp"]
+            PmsgRead["PmsgRead()<br/>pmsg_reader.cpp"]
+            LogEventList["android_log_write_list()<br/>log_event_list.cpp"]
+        end
+
+        subgraph LOGD["logd (Log Daemon)"]
+            LogListener["LogListener<br/>/dev/socket/logdw<br/>SOCK_DGRAM"]
+            LogReader["LogReader<br/>/dev/socket/logdr<br/>SOCK_SEQPACKET"]
+            CmdListener["CommandListener<br/>/dev/socket/logd<br/>SOCK_STREAM"]
+            LogKlog["LogKlog<br/>/proc/kmsg"]
+            LogAudit["LogAudit<br/>NETLINK_AUDIT"]
+            TrustyLog["TrustyLog<br/>/dev/trusty-log0"]
+            SerializedBuf["SerializedLogBuffer<br/>默认,每log_id独立list"]
+            SimpleBuf["SimpleLogBuffer<br/>备选,共享list"]
+            LogReaderThread["LogReaderThread<br/>FlushTo → SocketLogWriter"]
+            LogdNative["LogdNativeService<br/>BnLogd Binder<br/>AppOps权限审批"]
+            PruneList["PruneList<br/>日志裁剪规则"]
+            LogStats["LogStatistics<br/>UID/PID统计"]
+        end
+
+        subgraph LOGCAT["logcat (CLI Tool)"]
+            LogcatMain["logcat.cpp<br/>Logcat::Run()"]
+            LogcatProto["logcat.proto<br/>Protobuf输出"]
+            ProcessNames["process_names.cpp<br/>PID→进程名映射"]
+        end
+
+        LogPersist["logpersist<br/>持久化到文件"]
+    end
+
+    subgraph KERNEL["🐧 Kernel Layer"]
+        Printk["printk()"]
+        KMsg["/proc/kmsg<br/>内核环形缓冲区"]
+        Pmsg0["/dev/pmsg0<br/>pstore持久化"]
+        PstoreR["/sys/fs/pstore/<br/>pmsg-ramoops-0"]
+        NetlinkAudit["NETLINK_AUDIT<br/>SELinux审计"]
+        TrustyDev["/dev/trusty-log0<br/>Trusty TEE"]
+    end
+
+    %% ===== Application → Framework =====
+    JavaApp -->|"Log.d()"| LogJNI
+    LogJNI -->|"JNI"| LibLogFW
+    JavaApp -.->|"LogManager"| LogManager
+    LibLogFW --> WriteEntry
+
+    %% ===== Application → Native =====
+    NativeApp -->|"__android_log_write()"| WriteEntry
+    RustApp -->|"liblog_event_list<br/>(bindgen)"| LogEventList
+
+    %% ===== liblog 内部写入流 =====
+    WriteEntry -->|"构造<br/>__android_log_message"| LogdLogger
+    LogdLogger -->|"iovec[prio,tag,msg]"| WriteToLog
+    WriteToLog --> LogdWrite
+    WriteToLog --> PmsgWrite
+    LogEventList -->|"二进制事件日志"| WriteToLog
+
+    %% ===== liblog → logd (写入) =====
+    LogdWrite -->|"writev()<br/>/dev/socket/logdw<br/>DGRAM + SCM_CREDENTIALS"| LogListener
+    PmsgWrite -->|"writev()<br/>/dev/pmsg0"| Pmsg0
+
+    %% ===== logd 内部 =====
+    LogListener -->|"HandleData()<br/>验证uid/pid/gid"| SerializedBuf
+    LogListener -.->|"备选"| SimpleBuf
+    LogKlog -->|"内核日志<br/>monotonic→realtime"| SerializedBuf
+    LogAudit -->|"SELinux拒绝事件<br/>LOG_ID_MAIN/EVENTS"| SerializedBuf
+    TrustyLog -->|"TEE日志"| SerializedBuf
+    SerializedBuf -->|"NotifyNewLog()"| LogReaderThread
+    SimpleBuf -->|"NotifyNewLog()"| LogReaderThread
+    LogReaderThread -->|"FlushTo()"| LogReader
+    LogStats --> SerializedBuf
+    PruneList --> SerializedBuf
+    LogdNative --> LogReaderThread
+
+    %% ===== logd 读取流 =====
+    LogReader -->|"stream/dumpAndClose<br/>/dev/socket/logdr<br/>SEQPACKET"| LogdRead
+    CmdListener -->|"clear/getSize/<br/>getStats/setPruneList"| LogdRead
+
+    %% ===== pstore 读取 =====
+    Pmsg0 -->|"重启后"| PstoreR
+    PstoreR -->|"PmsgRead()"| PmsgRead
+
+    %% ===== logcat =====
+    LogdRead -->|"android_logger_list_read()"| LogcatMain
+    PmsgRead -->|"ANDROID_LOG_PSTORE"| LogcatMain
+    LogcatMain --> LogcatProto
+    LogcatMain --> ProcessNames
+    LogcatMain -->|"格式化输出<br/>brief/long/threadtime"| LogPersist
+
+    %% ===== Kernel 内部 =====
+    Printk --> KMsg
+    KMsg -->|"readDmesg() +<br/>startListener()"| LogKlog
+    NetlinkAudit --> LogAudit
+    TrustyDev --> TrustyLog
+
+    %% ===== 样式 =====
+    classDef appStyle fill:#4CAF50,stroke:#2E7D32,color:#fff,font-weight:bold
+    classDef fwStyle fill:#2196F3,stroke:#1565C0,color:#fff,font-weight:bold
+    classDef liblogStyle fill:#FF9800,stroke:#E65100,color:#fff,font-weight:bold
+    classDef logdStyle fill:#E91E63,stroke:#AD1457,color:#fff,font-weight:bold
+    classDef logcatStyle fill:#FF5722,stroke:#BF360C,color:#fff,font-weight:bold
+    classDef kernelStyle fill:#9C27B0,stroke:#6A1B9A,color:#fff,font-weight:bold
+
+    class JavaApp,NativeApp,RustApp appStyle
+    class LogJNI,LibLogFW,LogManager fwStyle
+    class WriteEntry,LogdLogger,WriteToLog,LogdWrite,PmsgWrite,LogdRead,PmsgRead,LogEventList liblogStyle
+    class LogListener,LogReader,CmdListener,LogKlog,LogAudit,TrustyLog,SerializedBuf,SimpleBuf,LogReaderThread,LogdNative,PruneList,LogStats logdStyle
+    class LogcatMain,LogcatProto,ProcessNames,LogPersist logcatStyle
+    class Printk,KMsg,Pmsg0,PstoreR,NetlinkAudit,TrustyDev kernelStyle

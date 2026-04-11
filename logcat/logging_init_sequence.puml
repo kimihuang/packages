@@ -1,0 +1,140 @@
+@startuml logging_init_sequence
+
+' ====== 样式设置 ======
+skinparam maxMessageSize 150
+skinparam ParticipantPadding 10
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+
+title Android Logging 系统初始化时序图\n(liblog + logd)
+
+autonumber
+
+' ====== 参与者 ======
+participant "init\n(PID 1)" as init order 10
+participant "logd\nmain()" as logd_main order 20
+participant "LogBuffer\n(Serialized/Simple)" as logbuf order 30
+participant "LogReaderList" as reader_list order 40
+participant "LogTags" as logtags order 50
+participant "LogStatistics" as logstats order 60
+participant "PruneList" as prunelist order 70
+participant "CommandListener\n(/dev/socket/logd)" as cmdlistener order 80
+participant "LogListener\n(/dev/socket/logdw)" as loglistener order 90
+participant "LogReader\n(/dev/socket/logdr)" as logreader order 100
+participant "LogKlog\n(/proc/kmsg)" as logklog order 110
+participant "LogAudit\n(NETLINK_AUDIT)" as logaudit order 120
+participant "TrustyLog\n(TEE)" as trustylog order 130
+participant "LogdNativeService\n(Binder)" as logdnative order 140
+participant "liblog\nTransportRegistry" as transport order 150
+participant "LogdWrite" as logdwrite order 160
+participant "PmsgWrite" as pmsgwrite order 170
+participant "LogdRead" as logdread order 180
+participant "PmsgRead" as pmsgread order 190
+
+== logd 守护进程启动 ==
+
+init -> logd_main : fork() + exec()
+activate logd_main
+
+logd_main -> logbuf : new SerializedLogBuffer()\n[或 SimpleLogBuffer]
+activate logbuf
+logbuf -> logbuf : Init()\n设置 LOG_ID_MAX 个缓冲区大小
+logbuf -> logstats : 初始化统计表
+logbuf -> logtags : 初始化事件标签映射
+
+logd_main -> reader_list : new LogReaderList()
+activate reader_list
+
+logd_main -> logtags : new LogTags()
+activate logtags
+
+logd_main -> logstats : new LogStatistics()
+activate logstats
+
+logd_main -> prunelist : new PruneList()\n读取 persist.logd.prune
+activate prunelist
+prunelist -> prunelist : Init()\n解析裁剪规则
+
+== 启动 Socket 监听器 ==
+
+logd_main -> cmdlistener : new CommandListener(buf, tags, prune, stats)
+activate cmdlistener
+cmdlistener -> cmdlistener : 注册 ClearCmd, GetBufSizeCmd,\nSetBufSizeCmd, GetStatisticsCmd,\nGetPruneListCmd, SetPruneListCmd 等
+cmdlistener -> cmdlistener : startListener()\n监听 /dev/socket/logd (SOCK_STREAM)
+
+logd_main -> loglistener : new LogListener(logbuf)
+activate loglistener
+loglistener -> loglistener : StartListener()\n监听 /dev/socket/logdw (SOCK_DGRAM)
+
+logd_main -> logreader : new LogReader(logbuf, reader_list)
+activate logreader
+logreader -> logreader : startListener()\n监听 /dev/socket/logdr (SOCK_SEQPACKET)
+
+== 启动外部日志源 ==
+
+logd_main -> logklog : new LogKlog(logbuf, stats)
+activate logklog
+logklog -> logklog : startListener()\n读取 /proc/kmsg
+note right of logklog : 将内核日志\n注入 LOG_ID_KERNEL\nmonotonic→realtime 转换
+
+logd_main -> logaudit : new LogAudit(logbuf, stats)
+activate logaudit
+logaudit -> logaudit : startListener()\n监听 NETLINK_AUDIT
+note right of logaudit : SELinux 审计事件\n注入 LOG_ID_MAIN/EVENTS
+
+logd_main -> trustylog : TrustyLog::create(logbuf)
+activate trustylog
+trustylog -> trustylog : startListener()\n读取 /dev/trusty-log0
+note right of trustylog : TEE 安全日志\n注入 LOG_ID_MAIN
+
+== 注册 Binder 服务 ==
+
+logd_main -> logdnative : new LogdNativeService(reader_list)
+activate logdnative
+logdnative -> logdnative : 发布为 android.os.ILogd\n注册到 ServiceManager
+
+logd_main -> logd_main : 进入主事件循环\nepoll_wait()
+
+deactivate logd_main
+
+== liblog 客户端初始化 (延迟，首次调用时) ==
+
+... 首次调用 __android_log_write 时触发 ...
+
+transport -> transport : __android_log_early_initialize()\n读取 ro.debuggable 等属性
+activate transport
+
+transport -> logdwrite : 注册 logdWriteTransport\n{open=logdOpen, write=LogdWrite, close=logdClose}
+activate logdwrite
+
+transport -> pmsgwrite : 注册 pmsgWriteTransport\n{open=pmsgOpen, write=PmsgWrite, close=pmsgClose}
+activate pmsgwrite
+
+transport -> logdread : 注册 logdReadTransport\n{open=LogdRead, read=LogdRead, ...}
+activate logdread
+
+transport -> pmsgread : 注册 pmsgReadTransport\n{open=PmsgRead, read=PmsgRead, ...}
+activate pmsgread
+
+note over transport : 所有 transport 注册完成\n后续写入/读取使用已注册 transport
+
+deactivate transport
+
+== LogdWrite 延迟连接 ==
+
+logdwrite -> logdwrite : LogdWrite::Init()\n首次写入时调用
+logdwrite -> logdwrite : socket(AF_UNIX, SOCK_DGRAM)\n连接 /dev/socket/logdw
+note right of logdwrite : 设置 SO_PASSCRED\n允许 SCM_CREDENTIALS 传递
+
+== PmsgWrite 延迟打开 ==
+
+pmsgwrite -> pmsgwrite : PmsgWrite::Init()\n首次写入时调用
+pmsgwrite -> pmsgwrite : open("/dev/pmsg0", O_WRONLY)
+note right of pmsgwrite : pstore 设备\n日志持久化到 RAM
+
+== LogdRead 延迟连接 ==
+
+logdread -> logdread : LogdRead::Open()\nlogcat 首次读取时调用
+logdread -> logdread : socket(AF_UNIX, SOCK_SEQPACKET)\n连接 /dev/socket/logdr
+
+@enduml
