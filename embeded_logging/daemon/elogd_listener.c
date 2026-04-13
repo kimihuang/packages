@@ -93,9 +93,18 @@ void* elogd_listener_thread(void* arg) {
 
         elog_ring_buf_t* target = elogd_get_buf(id);
         if (target) {
-            int ret = elog_ring_buf_log_from(&target->base,
-                id, (elog_level_t)hdr.level,
-                hdr.pid, hdr.tid, hdr.line, tag_buf, msg_buf);
+            int ret;
+            if (id == ELOG_ID_EVENTS) {
+                /* Binary-safe: 使用 explicit msg_len, 不用 strlen */
+                ret = elog_ring_buf_log_from_binary(&target->base,
+                    id, (elog_level_t)hdr.level,
+                    hdr.pid, hdr.tid, hdr.line,
+                    tag_buf, (const uint8_t*)msg_buf, hdr.msg_len);
+            } else {
+                ret = elog_ring_buf_log_from(&target->base,
+                    id, (elog_level_t)hdr.level,
+                    hdr.pid, hdr.tid, hdr.line, tag_buf, msg_buf);
+            }
             if (ret != ELOG_OK) {
                 /* prune drop 或 buffer full, 静默忽略 */
             }

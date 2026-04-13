@@ -13,6 +13,7 @@
 #include "elog_format.h"
 #include "elog_config.h"
 #include "elogd.h"
+#include "elog_event.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,12 +160,50 @@ static int cmd_send(const char* cmd, char* resp, size_t resp_len) {
 
 /* ===== 格式化输出 ===== */
 
+static void print_event_entry(const elog_msg_header_t* hdr, const char* tag,
+                               const uint8_t* msg, uint16_t msg_len) {
+    uint32_t event_id = 0;
+    if (msg_len >= 4) memcpy(&event_id, msg, 4);
+
+    char ts_buf[20] = {0};
+    elog_format_timestamp(hdr->timestamp, ts_buf, sizeof(ts_buf));
+    const char* color = elog_level_color((elog_level_t)hdr->level);
+
+    printf("%s %s I %-5u %-5u %s: EVENT(%u) [",
+           ts_buf, color, (unsigned)hdr->pid, (unsigned)hdr->tid, tag, (unsigned)event_id);
+
+    const uint8_t* payload = msg + 4;
+    size_t payload_len = msg_len - 4;
+    if (payload_len > 0 && payload[0] == ELOG_EVENT_TYPE_LIST) {
+        payload += 2; payload_len -= 2;
+    }
+
+    elog_event_parser_t parser;
+    elog_event_parser_init(&parser, payload, payload_len);
+
+    bool first = true;
+    elog_event_value_t val;
+    while (elog_event_parser_next(&parser, &val) == ELOG_OK) {
+        if (!first) printf(", ");
+        first = false;
+        switch (val.type) {
+        case ELOG_EVENT_TYPE_INT32:  printf("%d", val.int32_val); break;
+        case ELOG_EVENT_TYPE_INT64:  printf("%lld", (long long)val.int64_val); break;
+        case ELOG_EVENT_TYPE_FLOAT:  printf("%.6g", (double)val.float_val); break;
+        case ELOG_EVENT_TYPE_STRING: printf("\"%.*s\"", (int)val.str_len, val.str_val); break;
+        case ELOG_EVENT_TYPE_LIST:   printf("[...%u]", val.list_count); break;
+        default: printf("?"); break;
+        }
+    }
+    printf("]%s\n", color);
+}
+
 static void print_entry(const uint8_t* data, size_t len) {
     if (len < sizeof(elog_msg_header_t)) return;
 
     const elog_msg_header_t* hdr = (const elog_msg_header_t*)data;
     const char* tag = (const char*)(data + sizeof(elog_msg_header_t));
-    const char* msg = (const char*)(data + sizeof(elog_msg_header_t) + hdr->tag_len);
+    const uint8_t* msg = (const uint8_t*)(data + sizeof(elog_msg_header_t) + hdr->tag_len);
 
     /* 确保字符串以 NUL 结尾 */
     char tag_buf[ELOG_MAX_TAG_LEN + 1];
@@ -179,9 +218,15 @@ static void print_entry(const uint8_t* data, size_t len) {
         return;
     }
 
+    /* Events buffer: TLV 解码 */
+    if (hdr->log_id == ELOG_ID_EVENTS && hdr->msg_len >= 4) {
+        print_event_entry(hdr, tag_buf, msg, hdr->msg_len);
+        return;
+    }
+
     /* 文本格式化 */
     elog_format_ctx_t fmt;
-    elog_format_text(&fmt, hdr, tag_buf, msg);
+    elog_format_text(&fmt, hdr, tag_buf, (const char*)msg);
     if (fmt.len > 0) {
         fwrite(fmt.buf, 1, (size_t)fmt.len, stdout);
     }

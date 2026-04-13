@@ -115,6 +115,10 @@ size_t elogd_get_buf_size(elog_id_t id);
 /** buffer ID 名称 */
 const char* elogd_buf_name(elog_id_t id);
 
+/** Binary-safe client send (msg can contain NUL bytes) */
+int elogd_client_send_binary(const elog_msg_header_t* hdr, const char* tag,
+                              const uint8_t* msg, uint16_t msg_len);
+
 #ifdef __cplusplus
 }
 #endif

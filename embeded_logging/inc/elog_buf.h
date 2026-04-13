@@ -113,6 +113,14 @@ int elog_ring_buf_flush_range(elog_ring_buf_t* rb, size_t from, size_t to,
                                void* user);
 
 /**
+ * Binary-safe write: msg 可以包含 NUL 字节, 使用 explicit msg_len.
+ * 用于 daemon 接收二进制事件日志.
+ */
+int elog_ring_buf_log_from_binary(elog_buf_t* self, elog_id_t log_id, elog_level_t level,
+                                   uint16_t pid, uint16_t tid, uint16_t line,
+                                   const char* tag, const uint8_t* msg, uint16_t msg_len);
+
+/**
  * 设置裁剪策略
  */
 void elog_ring_buf_set_prune(elog_ring_buf_t* rb, struct elog_prune* prune);

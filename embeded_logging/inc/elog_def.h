@@ -118,8 +118,8 @@ typedef enum {
     ELOG_EVENT_TYPE_INT32  = 0,   /* 1B type + 4B value */
     ELOG_EVENT_TYPE_INT64  = 1,   /* 1B type + 8B value */
     ELOG_EVENT_TYPE_STRING = 2,   /* 1B type + 4B len + N bytes */
-    ELOG_EVENT_TYPE_FLOAT  = 3,   /* 1B type + 4B value */
-    ELOG_EVENT_TYPE_LIST   = 4,   /* 1B type + 1B count + elements */
+    ELOG_EVENT_TYPE_LIST   = 3,   /* 1B type + 1B count + elements (Android compat) */
+    ELOG_EVENT_TYPE_FLOAT  = 4,   /* 1B type + 4B value (Android compat) */
 } elog_event_type_t;
 
 /* ===== 读取模式标志 ===== */

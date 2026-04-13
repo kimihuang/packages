@@ -185,18 +185,6 @@ static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max)
 
 /* ===== 并发测试辅助 ===== */
 
-/* 建立 reader 连接并返回 fd (用于持续读取), tail=1 从尾部开始 */
-static int reader_connect_live(uint32_t log_mask, int tail) {
-    int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-    if (fd < 0) return -1;
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    strncpy(addr.sun_path, s_reader_sock, sizeof(addr.sun_path) - 1);
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
-    elog_read_request_t req = { .version = ELOG_READ_PROTOCOL_VERSION, .tail = (uint32_t)tail, .log_mask = log_mask };
-    if (send(fd, &req, sizeof(req), 0) < 0) { close(fd); return -1; }
-    return fd;
-}
-
 /* 建立 cmd 连接并返回 fd */
 static int cmd_connect(void) {
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -649,6 +637,74 @@ static void test_concurrent_multi_buffer(void) {
     T_OK("concurrent multi-buffer");
 }
 
+/* ===== 二进制事件 E2E ===== */
+
+static void test_e2e_binary_event(void) {
+    printf("  test_e2e_binary_event...\n");
+
+    /* 手动构造一个带嵌入 NUL 的二进制事件 datagram */
+    uint8_t event_data[32];
+    uint32_t event_id = 9999;
+    memcpy(event_data, &event_id, 4);
+    /* LIST header */
+    event_data[4] = ELOG_EVENT_TYPE_LIST;
+    event_data[5] = 2;
+    /* INT32 element */
+    event_data[6] = ELOG_EVENT_TYPE_INT32;
+    int32_t ival = 42;
+    memcpy(event_data + 7, &ival, 4);
+    /* STRING element with embedded NUL */
+    event_data[11] = ELOG_EVENT_TYPE_STRING;
+    uint32_t slen = 5;
+    memcpy(event_data + 12, &slen, 4);
+    memcpy(event_data + 16, "h\0i!", 5);  /* contains NUL byte */
+    size_t data_len = 21;
+
+    /* 构造 wire datagram, log_id=ELOG_ID_EVENTS */
+    elog_msg_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.log_id = ELOG_ID_EVENTS;
+    hdr.level = ELOG_LEVEL_INFO;
+    const char* tag = "bintest";
+    hdr.tag_len = (uint16_t)strlen(tag);
+    hdr.msg_len = (uint16_t)data_len;
+
+    uint8_t buf[sizeof(elog_msg_header_t) + 256];
+    memcpy(buf, &hdr, sizeof(hdr));
+    memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
+    memcpy(buf + sizeof(hdr) + hdr.tag_len, event_data, data_len);
+    size_t total = sizeof(hdr) + hdr.tag_len + hdr.msg_len;
+
+    /* 发送 */
+    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    T_ASSERT(fd >= 0, "socket");
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, s_write_sock, sizeof(addr.sun_path) - 1);
+    ssize_t sent = sendto(fd, buf, total, 0, (struct sockaddr*)&addr, sizeof(addr));
+    close(fd);
+    T_ASSERT(sent > 0, "send binary event");
+
+    usleep(200000);
+
+    /* 从 EVENTS buffer 读回 */
+    log_entry_t entries[10];
+    int n = reader_read_by_tag_mask("bintest", (1 << ELOG_ID_EVENTS), entries, 10);
+    T_ASSERT(n >= 1, "received binary event");
+    T_ASSERT(entries[0].hdr.log_id == ELOG_ID_EVENTS, "log_id is EVENTS");
+    T_ASSERT(entries[0].hdr.msg_len == (uint16_t)data_len, "msg_len preserved");
+
+    /* 验证 event_id */
+    uint32_t recv_id;
+    memcpy(&recv_id, entries[0].msg, 4);
+    T_ASSERT(recv_id == 9999, "event_id matches");
+
+    /* 验证嵌入 NUL 完整保留 */
+    T_ASSERT(entries[0].msg[17] == '\0', "embedded NUL preserved");
+    T_ASSERT(entries[0].msg[18] == 'i', "data after NUL preserved");
+
+    T_OK("e2e binary event");
+}
+
 /* ===== main ===== */
 
 int main(void) {
@@ -673,6 +729,7 @@ int main(void) {
     test_concurrent_write_read();
     test_concurrent_write_cmd();
     test_concurrent_multi_buffer();
+    test_e2e_binary_event();
 
     stop_elogd();
 

@@ -105,3 +105,40 @@ bool elogd_client_is_connected(void) {
     elog_mutex_unlock(&g_elogd_lock);
     return fd >= 0;
 }
+
+int elogd_client_send_binary(const elog_msg_header_t* hdr, const char* tag,
+                              const uint8_t* msg, uint16_t msg_len) {
+    if (!hdr) return ELOG_ERR_PARAM;
+
+    elog_mutex_lock(&g_elogd_lock);
+    if (g_elogd_fd < 0) {
+        elog_mutex_unlock(&g_elogd_lock);
+        return ELOG_ERR_NOT_INIT;
+    }
+
+    uint8_t buf[sizeof(elog_msg_header_t) + ELOG_MAX_TAG_LEN + ELOG_MAX_MSG_LEN];
+    memcpy(buf, hdr, sizeof(elog_msg_header_t));
+
+    uint16_t tag_len = tag ? (uint16_t)ELOG_MIN(strlen(tag), ELOG_MAX_TAG_LEN - 1) : 0;
+    if (tag_len > 0) memcpy(buf + sizeof(elog_msg_header_t), tag, tag_len);
+    if (msg && msg_len > 0) memcpy(buf + sizeof(elog_msg_header_t) + tag_len, msg, msg_len);
+
+    size_t total = sizeof(elog_msg_header_t) + tag_len + msg_len;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, g_daemon_write_sock, sizeof(addr.sun_path) - 1);
+
+    ssize_t sent = sendto(g_elogd_fd, buf, total, 0,
+                          (struct sockaddr*)&addr, sizeof(addr));
+    if (sent < 0) {
+        close(g_elogd_fd);
+        g_elogd_fd = -1;
+        elog_mutex_unlock(&g_elogd_lock);
+        return ELOG_ERR_BUSY;
+    }
+
+    elog_mutex_unlock(&g_elogd_lock);
+    return ELOG_OK;
+}
