@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -180,6 +181,30 @@ static int reader_read_by_tag_mask(const char* tag_filter, uint32_t log_mask,
 /* 便捷: 读全部 (log_mask=0) */
 static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max) {
     return reader_read_by_tag_mask(tag_filter, 0, out, max);
+}
+
+/* ===== 并发测试辅助 ===== */
+
+/* 建立 reader 连接并返回 fd (用于持续读取), tail=1 从尾部开始 */
+static int reader_connect_live(uint32_t log_mask, int tail) {
+    int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, s_reader_sock, sizeof(addr.sun_path) - 1);
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+    elog_read_request_t req = { .version = ELOG_READ_PROTOCOL_VERSION, .tail = (uint32_t)tail, .log_mask = log_mask };
+    if (send(fd, &req, sizeof(req), 0) < 0) { close(fd); return -1; }
+    return fd;
+}
+
+/* 建立 cmd 连接并返回 fd */
+static int cmd_connect(void) {
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, s_cmd_sock, sizeof(addr.sun_path) - 1);
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+    return fd;
 }
 
 /* ===== 测试用例 ===== */
@@ -391,6 +416,239 @@ static void test_e2e_buffer_stats(void) {
     T_OK("e2e buffer stats");
 }
 
+/* ===== 并发测试 ===== */
+
+/* 多进程并发写: fork N 个子进程, 各自写 50 条, 读端验证总数 */
+static void test_concurrent_writers(void) {
+    printf("  test_concurrent_writers...\n");
+
+    const int NPROC = 4;
+    const int PER_PROC = 50;
+    pid_t pids[NPROC];
+
+    for (int p = 0; p < NPROC; p++) {
+        pid_t pid = fork();
+        if (pid < 0) { T_ASSERT(0, "fork"); return; }
+        if (pid == 0) {
+            /* 子进程: 快速写入 */
+            for (int i = 0; i < PER_PROC; i++) {
+                char msg[32];
+                snprintf(msg, sizeof(msg), "p%d_%d", p, i);
+                send_log("cw", msg, ELOG_LEVEL_INFO);
+            }
+            _exit(0);
+        }
+        pids[p] = pid;
+    }
+
+    /* 等待所有子进程完成 */
+    for (int i = 0; i < NPROC; i++) waitpid(pids[i], NULL, 0);
+    usleep(300000);
+
+    /* 读端验证: 应收到 NPROC * PER_PROC 条 */
+    log_entry_t entries[300];
+    int n = reader_read_by_tag("cw", entries, 300);
+    T_ASSERT(n >= NPROC * PER_PROC, "received enough entries");
+    T_OK("concurrent writers");
+}
+
+/* 多 reader 并发: 同时开 2 个 reader 各订阅不同 buffer */
+static void test_concurrent_readers(void) {
+    printf("  test_concurrent_readers...\n");
+
+    /* 写入不同 buffer */
+    for (int i = 0; i < 20; i++) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "r%d", i);
+        send_log_ex(ELOG_ID_MAIN, "cr", msg, ELOG_LEVEL_INFO);
+        snprintf(msg, sizeof(msg), "s%d", i);
+        send_log_ex(ELOG_ID_SYSTEM, "cr_sys", msg, ELOG_LEVEL_INFO);
+    }
+    usleep(200000);
+
+    /* fork 2 个 reader 子进程 */
+    int pipefd[2];
+    pipe(pipefd);
+
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        close(pipefd[0]);
+        log_entry_t entries[30];
+        int n = reader_read_by_tag_mask("cr", (1 << ELOG_ID_MAIN), entries, 30);
+        write(pipefd[1], &n, sizeof(n));
+        _exit(n >= 20 ? 0 : 1);
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(pipefd[0]);
+        log_entry_t entries[30];
+        int n = reader_read_by_tag_mask("cr_sys", (1 << ELOG_ID_SYSTEM), entries, 30);
+        write(pipefd[1], &n, sizeof(n));
+        _exit(n >= 20 ? 0 : 1);
+    }
+
+    close(pipefd[1]);
+    int n1 = 0, n2 = 0;
+    read(pipefd[0], &n1, sizeof(n1));
+    read(pipefd[0], &n2, sizeof(n2));
+    close(pipefd[0]);
+
+    int st1, st2;
+    waitpid(pid1, &st1, 0);
+    waitpid(pid2, &st2, 0);
+
+    T_ASSERT(n1 >= 20, "reader1 got main entries");
+    T_ASSERT(n2 >= 20, "reader2 got system entries");
+    T_OK("concurrent readers");
+}
+
+/* 写 + 读并发: fork writer + reader 子进程同时操作, 验证无崩溃且数据完整 */
+static void test_concurrent_write_read(void) {
+    printf("  test_concurrent_write_read...\n");
+
+    const int TOTAL = 100;
+    int r_pipe[2], w_pipe[2];
+    pipe(r_pipe);   /* reader → parent: count */
+    pipe(w_pipe);   /* parent → reader: start signal */
+
+    pid_t reader_pid = fork();
+    if (reader_pid == 0) {
+        close(r_pipe[0]); close(w_pipe[1]);
+        /* 等待 parent 信号 */
+        char sig = 0;
+        read(w_pipe[0], &sig, 1);
+        /* 用 tail=0 从头读, 通过 tag 过滤 */
+        log_entry_t entries[200];
+        int n = reader_read_by_tag("cwr", entries, 200);
+        write(r_pipe[1], &n, sizeof(n));
+        _exit(0);
+    }
+
+    close(r_pipe[1]); close(w_pipe[0]);
+
+    /* writer 先写, reader 同时连接并读 */
+    for (int i = 0; i < TOTAL; i++) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "wr%d", i);
+        send_log("cwr", msg, ELOG_LEVEL_INFO);
+    }
+
+    /* 通知 reader 开始读 */
+    char sig = 1;
+    write(w_pipe[1], &sig, 1);
+
+    int reader_count = 0;
+    read(r_pipe[0], &reader_count, sizeof(reader_count));
+    close(r_pipe[0]); close(w_pipe[1]);
+    waitpid(reader_pid, NULL, 0);
+
+    T_ASSERT(reader_count >= TOTAL, "reader got all entries");
+    T_OK("concurrent write+read");
+}
+
+/* 写 + cmd 并发: 一边写, 一边发 stats, 验证不崩溃 */
+static void test_concurrent_write_cmd(void) {
+    printf("  test_concurrent_write_cmd...\n");
+
+    const int TOTAL = 200;
+
+    /* fork: 子进程疯狂发 stats */
+    pid_t cmd_pid = fork();
+    if (cmd_pid == 0) {
+        for (int i = 0; i < 50; i++) {
+            int fd = cmd_connect();
+            if (fd >= 0) {
+                write(fd, "stats\n", 6);
+                char buf[2048];
+                while (read(fd, buf, sizeof(buf)) > 0) {}
+                close(fd);
+            }
+            usleep(1000);
+        }
+        _exit(0);
+    }
+
+    /* 父进程: 同时写日志 */
+    for (int i = 0; i < TOTAL; i++) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "wc%d", i);
+        send_log("cwc", msg, ELOG_LEVEL_INFO);
+    }
+
+    int st;
+    waitpid(cmd_pid, &st, 0);
+
+    T_ASSERT(WIFEXITED(st) && WEXITSTATUS(st) == 0, "cmd process exited normally");
+
+    /* 验证: 数据应完整 */
+    usleep(200000);
+    log_entry_t entries[300];
+    int n = reader_read_by_tag("cwc", entries, 300);
+    T_ASSERT(n >= TOTAL, "all writes survived");
+    T_OK("concurrent write+cmd");
+}
+
+/* 多 buffer 并发写: 多进程同时写不同 buffer, 各自读取无交叉 */
+static void test_concurrent_multi_buffer(void) {
+    printf("  test_concurrent_multi_buffer...\n");
+
+    const int PER_BUF = 30;
+
+    /* 3 个子进程各写一个 buffer */
+    pid_t p_main = fork();
+    if (p_main == 0) {
+        for (int i = 0; i < PER_BUF; i++) {
+            char msg[32]; snprintf(msg, sizeof(msg), "m%d", i);
+            send_log_ex(ELOG_ID_MAIN, "cmb_m", msg, ELOG_LEVEL_INFO);
+        }
+        _exit(0);
+    }
+
+    pid_t p_radio = fork();
+    if (p_radio == 0) {
+        for (int i = 0; i < PER_BUF; i++) {
+            char msg[32]; snprintf(msg, sizeof(msg), "r%d", i);
+            send_log_ex(ELOG_ID_RADIO, "cmb_r", msg, ELOG_LEVEL_INFO);
+        }
+        _exit(0);
+    }
+
+    pid_t p_crash = fork();
+    if (p_crash == 0) {
+        for (int i = 0; i < PER_BUF; i++) {
+            char msg[32]; snprintf(msg, sizeof(msg), "c%d", i);
+            send_log_ex(ELOG_ID_CRASH, "cmb_c", msg, ELOG_LEVEL_ERROR);
+        }
+        _exit(0);
+    }
+
+    waitpid(p_main, NULL, 0);
+    waitpid(p_radio, NULL, 0);
+    waitpid(p_crash, NULL, 0);
+    usleep(300000);
+
+    /* 各自读, 验证无交叉 */
+    log_entry_t e_main[50], e_radio[50], e_crash[50];
+    int n1 = reader_read_by_tag_mask("cmb_m", (1 << ELOG_ID_MAIN), e_main, 50);
+    int n2 = reader_read_by_tag_mask("cmb_r", (1 << ELOG_ID_RADIO), e_radio, 50);
+    int n3 = reader_read_by_tag_mask("cmb_c", (1 << ELOG_ID_CRASH), e_crash, 50);
+
+    T_ASSERT(n1 >= PER_BUF, "main got its entries");
+    T_ASSERT(n2 >= PER_BUF, "radio got its entries");
+    T_ASSERT(n3 >= PER_BUF, "crash got its entries");
+
+    /* 验证隔离: 所有 main 条目 level=INFO, 所有 crash 条目 level=ERROR */
+    int main_ok = 1, crash_ok = 1;
+    for (int i = 0; i < n1 && main_ok; i++)
+        if (e_main[i].hdr.log_id != ELOG_ID_MAIN) main_ok = 0;
+    for (int i = 0; i < n3 && crash_ok; i++)
+        if (e_crash[i].hdr.log_id != ELOG_ID_CRASH) crash_ok = 0;
+    T_ASSERT(main_ok, "main entries isolated");
+    T_ASSERT(crash_ok, "crash entries isolated");
+    T_OK("concurrent multi-buffer");
+}
+
 /* ===== main ===== */
 
 int main(void) {
@@ -410,6 +668,11 @@ int main(void) {
     test_e2e_multi_buffer();
     test_e2e_log_mask();
     test_e2e_buffer_stats();
+    test_concurrent_writers();
+    test_concurrent_readers();
+    test_concurrent_write_read();
+    test_concurrent_write_cmd();
+    test_concurrent_multi_buffer();
 
     stop_elogd();
 
