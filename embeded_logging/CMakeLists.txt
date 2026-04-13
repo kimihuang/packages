@@ -33,9 +33,15 @@ add_executable(elogd
     daemon/elogd_listener.c
     daemon/elogd_cmd.c
     daemon/elogd_flush.c
+    daemon/elogd_reader.c
 )
 target_link_libraries(elogd PRIVATE elog)
 target_include_directories(elogd PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
+
+# ===== elogcat CLI =====
+add_executable(elogcat tools/elogcat.c)
+target_link_libraries(elogcat PRIVATE elog)
+target_include_directories(elogcat PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
 
 # ===== 测试 =====
 enable_testing()
@@ -57,5 +63,6 @@ set(TEST_SOURCES
 
 add_executable(elog_test ${TEST_SOURCES})
 target_link_libraries(elog_test PRIVATE elog)
+target_include_directories(elog_test PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
 
 add_test(NAME elog_test COMMAND elog_test)

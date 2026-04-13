@@ -22,6 +22,10 @@ extern "C" {
 #define ELOG_DAEMON_CMD_SOCK  "/var/run/elogd"
 #endif
 
+#ifndef ELOG_DAEMON_READER_SOCK
+#define ELOG_DAEMON_READER_SOCK  "/var/run/elogdr"
+#endif
+
 /* Daemon 缓冲区大小 (独立于 ELOG_BUFFER_SIZE) */
 #ifndef ELOG_DAEMON_BUFFER_SIZE
 #define ELOG_DAEMON_BUFFER_SIZE  (256 * 1024)  /* 256KB */
@@ -65,6 +69,24 @@ int elogd_client_send(const elog_msg_header_t* hdr, const char* tag, const char*
  * 检查客户端是否已连接
  */
 bool elogd_client_is_connected(void);
+
+/* ===== Reader 协议 ===== */
+
+#define ELOG_READ_PROTOCOL_VERSION  1
+
+/**
+ * elogcat 连接时发送的请求 (SOCK_SEQPACKET 握手)
+ */
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t version;       /* 协议版本, 当前 = 1 */
+    uint32_t tail;          /* 1 = 从尾部开始, 0 = 从头部开始 */
+    uint32_t count;         /* 最多读取条数, 0 = 无限 */
+    uint8_t  min_level;     /* 最低级别过滤, 0 = 全部 */
+    uint16_t pid_filter;    /* PID 过滤, 0 = 不过滤 */
+    uint32_t timeout_ms;    /* 阻塞超时, 0 = 永久阻塞 */
+} elog_read_request_t;
+#pragma pack(pop)
 
 #ifdef __cplusplus
 }

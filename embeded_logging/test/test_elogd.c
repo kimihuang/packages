@@ -1,11 +1,12 @@
 /**
  * @file test_elogd.c
- * @brief elogd 单元测试 — log_from API + 线路格式 + 客户端
+ * @brief elogd 单元测试 — log_from API + 线路格式 + 客户端 + reader 协议
  */
 
 #include "elog_buf.h"
 #include "elog_prune.h"
 #include "elog_def.h"
+#include "elogd.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -247,6 +248,103 @@ static void test_log_from_write_to_ring(void) {
     elog_ring_buf_destroy(&rb);
 }
 
+/* ===== Reader 协议测试 ===== */
+
+static void test_read_request_struct(void) {
+    printf("  test_read_request_struct...\n");
+
+    /* 验证结构体大小和字段布局 */
+    elog_read_request_t req;
+    memset(&req, 0, sizeof(req));
+    assert(sizeof(req) >= 18);  /* version(4)+tail(4)+count(4)+min_level(1)+pid(2)+timeout(4) */
+
+    req.version = ELOG_READ_PROTOCOL_VERSION;
+    req.tail = 1;
+    req.count = 100;
+    req.min_level = ELOG_LEVEL_WARN;
+    req.pid_filter = 1234;
+    req.timeout_ms = 5000;
+
+    assert(req.version == 1);
+    assert(req.tail == 1);
+    assert(req.count == 100);
+    assert(req.min_level == ELOG_LEVEL_WARN);
+    assert(req.pid_filter == 1234);
+    assert(req.timeout_ms == 5000);
+}
+
+static void test_read_request_wire_roundtrip(void) {
+    printf("  test_read_request_wire_roundtrip...\n");
+
+    /* 模拟序列化/反序列化 */
+    elog_read_request_t req;
+    memset(&req, 0, sizeof(req));
+    req.version = ELOG_READ_PROTOCOL_VERSION;
+    req.tail = 1;
+    req.count = 50;
+    req.min_level = ELOG_LEVEL_INFO;
+    req.pid_filter = 0;
+    req.timeout_ms = 0;
+
+    /* 通过 memcpy 序列化 (模拟 send/recv) */
+    uint8_t wire[64];
+    memcpy(wire, &req, sizeof(req));
+
+    /* 反序列化 */
+    elog_read_request_t recv;
+    memcpy(&recv, wire, sizeof(recv));
+
+    assert(recv.version == req.version);
+    assert(recv.tail == req.tail);
+    assert(recv.count == req.count);
+    assert(recv.min_level == req.min_level);
+    assert(recv.pid_filter == req.pid_filter);
+    assert(recv.timeout_ms == req.timeout_ms);
+}
+
+static void test_datagram_entry_size(void) {
+    printf("  test_datagram_entry_size...\n");
+
+    /* 验证: 一个 datagram 的大小 = sizeof(header) + tag_len + msg_len */
+    elog_msg_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    const char* tag = "sensor";
+    const char* msg = "temp=25.5";
+    hdr.tag_len = (uint16_t)strlen(tag);
+    hdr.msg_len = (uint16_t)strlen(msg);
+
+    size_t datagram_size = sizeof(hdr) + hdr.tag_len + hdr.msg_len;
+    assert(datagram_size == 16 + 6 + 9);  /* 31 bytes */
+
+    /* 构造完整 datagram */
+    uint8_t buf[64];
+    memcpy(buf, &hdr, sizeof(hdr));
+    memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
+    memcpy(buf + sizeof(hdr) + hdr.tag_len, msg, hdr.msg_len);
+
+    /* 解析验证 */
+    elog_msg_header_t recv_hdr;
+    memcpy(&recv_hdr, buf, sizeof(recv_hdr));
+    assert(recv_hdr.tag_len == 6);
+    assert(recv_hdr.msg_len == 9);
+    assert(memcmp(buf + sizeof(recv_hdr), "sensor", 6) == 0);
+    assert(memcmp(buf + sizeof(recv_hdr) + 6, "temp=25.5", 9) == 0);
+}
+
+static void test_reader_sock_paths(void) {
+    printf("  test_reader_sock_paths...\n");
+
+    /* 验证 socket 路径常量存在且合理 */
+    assert(strlen(ELOG_DAEMON_SOCK_PATH) > 0);
+    assert(strlen(ELOG_DAEMON_CMD_SOCK) > 0);
+    assert(strlen(ELOG_DAEMON_READER_SOCK) > 0);
+
+    /* 三个 socket 路径应该不同 */
+    assert(strcmp(ELOG_DAEMON_SOCK_PATH, ELOG_DAEMON_CMD_SOCK) != 0);
+    assert(strcmp(ELOG_DAEMON_CMD_SOCK, ELOG_DAEMON_READER_SOCK) != 0);
+    assert(strcmp(ELOG_DAEMON_SOCK_PATH, ELOG_DAEMON_READER_SOCK) != 0);
+}
+
 int test_elogd(void) {
     printf("test_elogd:\n");
 
@@ -258,6 +356,10 @@ int test_elogd(void) {
     test_log_from_null_msg();
     test_wire_format();
     test_log_from_write_to_ring();
+    test_read_request_struct();
+    test_read_request_wire_roundtrip();
+    test_datagram_entry_size();
+    test_reader_sock_paths();
 
     return 0;
 }

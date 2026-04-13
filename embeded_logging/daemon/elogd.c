@@ -3,10 +3,11 @@
  * @brief elogd 守护进程入口
  *
  * 线程模型 (对标 Android logd):
- *   main        — init → 启动 3 detached threads → pause()
+ *   main        — init → 启动 4 detached threads → pause()
  *   listener    — SOCK_DGRAM recvmsg 循环, 接收日志写入 ring buffer
  *   cmd         — SOCK_STREAM accept 循环, 处理管理命令
  *   flusher     — condvar wait → flush ring buffer → file transport
+ *   reader      — SOCK_SEQPACKET accept, per-client push 线程
  */
 
 #include "elogd.h"
@@ -30,11 +31,13 @@ volatile bool g_daemon_running = false;
 static pthread_t s_listener_tid;
 static pthread_t s_cmd_tid;
 static pthread_t s_flusher_tid;
+static pthread_t s_reader_tid;
 
 /* 线程入口声明 (在其他文件定义) */
 extern void* elogd_listener_thread(void* arg);
 extern void* elogd_cmd_thread(void* arg);
 extern void* elogd_flusher_thread(void* arg);
+extern void* elogd_reader_thread(void* arg);
 
 static void signal_handler(int sig) {
     (void)sig;
@@ -68,10 +71,12 @@ int elogd_run(void) {
     pthread_create(&s_listener_tid, NULL, elogd_listener_thread, NULL);
     pthread_create(&s_cmd_tid, NULL, elogd_cmd_thread, NULL);
     pthread_create(&s_flusher_tid, NULL, elogd_flusher_thread, NULL);
+    pthread_create(&s_reader_tid, NULL, elogd_reader_thread, NULL);
 
     pthread_detach(s_listener_tid);
     pthread_detach(s_cmd_tid);
     pthread_detach(s_flusher_tid);
+    pthread_detach(s_reader_tid);
 
     printf("elogd: ready (buffer=%uKB)\n", (unsigned)(ELOG_DAEMON_BUFFER_SIZE / 1024));
 
