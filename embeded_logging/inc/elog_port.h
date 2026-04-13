@@ -21,13 +21,13 @@ extern "C" {
 
 /* ===== 同步原语 ===== */
 
-typedef struct {
-    /* 平台不透明，Linux 下为 pthread_mutex_t */
+typedef struct __attribute__((aligned(8))) {
+    /* platform opaque, Linux: pthread_mutex_t */
     uint8_t _opaque[64];
 } elog_mutex_t;
 
-typedef struct {
-    /* 平台不透明，Linux 下为 pthread_cond_t */
+typedef struct __attribute__((aligned(8))) {
+    /* platform opaque, Linux: pthread_cond_t */
     uint8_t _opaque[64];
 } elog_cond_t;
 
@@ -40,6 +40,15 @@ void elog_cond_init(elog_cond_t* c);
 void elog_cond_destroy(elog_cond_t* c);
 void elog_cond_signal(elog_cond_t* c);
 void elog_cond_wait(elog_cond_t* c, elog_mutex_t* m);
+
+/**
+ * 带超时的条件变量等待
+ * @param c           条件变量
+ * @param m           互斥锁 (必须已锁定)
+ * @param timeout_ms  超时毫秒 (0=立即返回)
+ * @return ELOG_OK=被唤醒, ELOG_ERR_BUSY=超时
+ */
+int elog_cond_timedwait(elog_cond_t* c, elog_mutex_t* m, int timeout_ms);
 
 /* ===== 时间 ===== */
 

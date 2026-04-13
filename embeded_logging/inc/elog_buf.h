@@ -93,6 +93,15 @@ int  elog_ring_buf_log_isr(elog_ring_buf_t* rb, elog_id_t log_id, elog_level_t l
                            uint16_t pid, uint16_t tid, uint16_t line,
                            const char* tag, const char* msg);
 
+/**
+ * 从指定范围 [from, to) 读取条目 (不修改 rb->read_pos)
+ * 调用者需自行持有 rb->lock。用于 reader 独立消费。
+ */
+int elog_ring_buf_flush_range(elog_ring_buf_t* rb, size_t from, size_t to,
+                               int (*callback)(const elog_msg_header_t*,
+                                               const char*, const char*, void*),
+                               void* user);
+
 #ifdef __cplusplus
 }
 #endif

@@ -156,29 +156,21 @@ int elog_ring_buf_log(elog_buf_t* self, elog_id_t log_id, elog_level_t level,
     return ret;
 }
 
-int elog_ring_buf_flush(elog_buf_t* self,
-                         int (*callback)(const elog_msg_header_t* hdr,
-                                         const char* tag, const char* msg, void* user),
-                         void* user) {
-    elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
-    if (!rb || !rb->buffer || !callback) return ELOG_ERR_PARAM;
-
-    elog_mutex_lock(&rb->lock);
-
+/* 内部: 从 [from, end) 范围 flush，返回 (flushed_count, new_pos) */
+static int flush_range_unlocked(elog_ring_buf_t* rb, size_t from, size_t end,
+                                 int (*callback)(const elog_msg_header_t*,
+                                                 const char*, const char*, void*),
+                                 void* user, size_t* out_pos) {
     int flushed = 0;
-    size_t pos = rb->read_pos;
-    size_t end = rb->write_pos;
+    size_t pos = from;
 
     while (pos != end && flushed < 4096) {
-        /* 读取 entry_len (跨边界安全) */
         uint32_t entry_len = ring_read_u32(rb->buffer, rb->buf_capacity, pos);
 
-        /* 读取 header (跨边界安全) */
         elog_msg_header_t hdr;
         size_t data_pos = (pos + ENTRY_PREFIX_LEN) % rb->buf_capacity;
         ring_read(rb->buffer, rb->buf_capacity, data_pos, &hdr, sizeof(hdr));
 
-        /* 读取 tag (跨边界安全) */
         char tag_buf[ELOG_MAX_TAG_LEN];
         tag_buf[0] = '\0';
         if (hdr.tag_len > 0 && hdr.tag_len < ELOG_MAX_TAG_LEN) {
@@ -187,7 +179,6 @@ int elog_ring_buf_flush(elog_buf_t* self,
             tag_buf[hdr.tag_len] = '\0';
         }
 
-        /* 读取 msg (跨边界安全) */
         char msg_buf[ELOG_MAX_MSG_LEN];
         msg_buf[0] = '\0';
         if (hdr.msg_len > 0 && hdr.msg_len < ELOG_MAX_MSG_LEN) {
@@ -203,9 +194,33 @@ int elog_ring_buf_flush(elog_buf_t* self,
         flushed++;
     }
 
-    rb->read_pos = pos;
+    if (out_pos) *out_pos = pos;
+    return flushed;
+}
+
+int elog_ring_buf_flush(elog_buf_t* self,
+                         int (*callback)(const elog_msg_header_t* hdr,
+                                         const char* tag, const char* msg, void* user),
+                         void* user) {
+    elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
+    if (!rb || !rb->buffer || !callback) return ELOG_ERR_PARAM;
+
+    elog_mutex_lock(&rb->lock);
+    size_t new_pos;
+    int flushed = flush_range_unlocked(rb, rb->read_pos, rb->write_pos, callback, user, &new_pos);
+    rb->read_pos = new_pos;
     elog_mutex_unlock(&rb->lock);
     return flushed;
+}
+
+int elog_ring_buf_flush_range(elog_ring_buf_t* rb, size_t from, size_t to,
+                               int (*callback)(const elog_msg_header_t*,
+                                               const char*, const char*, void*),
+                               void* user) {
+    if (!rb || !rb->buffer || !callback) return ELOG_ERR_PARAM;
+    /* 调用者需持有 rb->lock */
+    size_t new_pos;
+    return flush_range_unlocked(rb, from, to, callback, user, &new_pos);
 }
 
 void elog_ring_buf_clear(elog_buf_t* self) {

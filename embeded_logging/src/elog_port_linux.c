@@ -8,6 +8,7 @@
 #include "elog_port.h"
 #include <pthread.h>
 #include <time.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 
@@ -60,6 +61,25 @@ void elog_cond_wait(elog_cond_t* c, elog_mutex_t* m) {
     pthread_cond_t* cv = (pthread_cond_t*)c->_opaque;
     pthread_mutex_t* mtx = (pthread_mutex_t*)m->_opaque;
     pthread_cond_wait(cv, mtx);
+}
+
+int elog_cond_timedwait(elog_cond_t* c, elog_mutex_t* m, int timeout_ms) {
+    if (!c || !m) return ELOG_ERR_PARAM;
+    if (timeout_ms <= 0) return ELOG_ERR_BUSY;
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec  += timeout_ms / 1000;
+    ts.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec  += 1;
+        ts.tv_nsec -= 1000000000L;
+    }
+
+    pthread_cond_t* cv = (pthread_cond_t*)c->_opaque;
+    pthread_mutex_t* mtx = (pthread_mutex_t*)m->_opaque;
+    int rc = pthread_cond_timedwait(cv, mtx, &ts);
+    return (rc == ETIMEDOUT) ? ELOG_ERR_BUSY : ELOG_OK;
 }
 
 /* ===== 时间 ===== */

@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # 编译选项
-add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+add_compile_options(-Wall -Wextra -Wno-unused-parameter -pthread)
 
 # 头文件搜索路径
 include_directories(${CMAKE_SOURCE_DIR}/inc)
@@ -22,10 +22,10 @@ set(ELOG_SOURCES
     src/elog_transport_stdout.c
     src/elog_transport_file.c
     src/elog_port_linux.c
+    src/elog_reader.c
 )
 
 add_library(elog STATIC ${ELOG_SOURCES})
-target_link_libraries(elog PUBLIC pthread)
 
 # ===== 测试 =====
 enable_testing()
@@ -41,9 +41,10 @@ set(TEST_SOURCES
     test/test_elog_transport.c
     test/test_elog_transport_file.c
     test/test_elog_port.c
+    test/test_elog_reader.c
 )
 
 add_executable(elog_test ${TEST_SOURCES})
-target_link_libraries(elog_test PRIVATE elog pthread)
+target_link_libraries(elog_test PRIVATE elog)
 
 add_test(NAME elog_test COMMAND elog_test)

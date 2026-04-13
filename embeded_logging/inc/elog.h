@@ -14,6 +14,7 @@
 #define ELOG_H
 
 #include "elog_def.h"
+#include "elog_reader.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -193,6 +194,13 @@ void elog_default_assert_hook(void);
             if (elog_assert_hook_func) elog_assert_hook_func(); \
         } \
     } while(0)
+
+/* ===== Reader ===== */
+
+/**
+ * 获取全局 ReaderList (elog_init 后可用)
+ */
+elog_reader_list_t* elog_get_reader_list(void);
 
 #ifdef __cplusplus
 }

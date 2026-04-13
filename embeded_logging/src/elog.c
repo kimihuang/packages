@@ -43,6 +43,9 @@ static struct {
     elog_transport_registry_t registry;
     elog_stdout_transport_t   stdout_transport;
 
+    /* Reader */
+    elog_reader_list_t reader_list;
+
     /* 后端替换 */
     elog_logger_func_t logger_func;
 
@@ -158,6 +161,9 @@ int elog_init(void) {
     g_elog.stdout_transport.base.open(&g_elog.stdout_transport.base);
     elog_transport_register(&g_elog.registry, &g_elog.stdout_transport.base);
 
+    /* 初始化 ReaderList */
+    elog_reader_list_init(&g_elog.reader_list);
+
     /* 设置默认后端 */
     g_elog.logger_func = elog_default_logger;
 
@@ -173,6 +179,9 @@ void elog_deinit(void) {
 
     /* 注销所有 transport */
     elog_transport_registry_destroy(&g_elog.registry);
+
+    /* 销毁 ReaderList */
+    elog_reader_list_destroy(&g_elog.reader_list);
 
     /* 关闭 stdout transport */
     g_elog.stdout_transport.base.close(&g_elog.stdout_transport.base);
@@ -339,4 +348,8 @@ int elog_prune_get_rules(char* buf, size_t len) {
     (void)buf; (void)len;
     return 0;
 #endif
+}
+
+elog_reader_list_t* elog_get_reader_list(void) {
+    return g_elog.initialized ? &g_elog.reader_list : NULL;
 }

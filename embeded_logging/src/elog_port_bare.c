@@ -20,6 +20,11 @@ void elog_cond_destroy(elog_cond_t* c) { (void)c; }
 void elog_cond_signal(elog_cond_t* c)  { (void)c; }
 void elog_cond_wait(elog_cond_t* c, elog_mutex_t* m) { (void)c; (void)m; }
 
+int elog_cond_timedwait(elog_cond_t* c, elog_mutex_t* m, int timeout_ms) {
+    (void)c; (void)m; (void)timeout_ms;
+    return ELOG_ERR_BUSY;  /* bare-metal: 总是超时 */
+}
+
 /* ===== 时间 (用户需根据 MCU RTC 实现) ===== */
 
 uint32_t elog_port_now(void) {
