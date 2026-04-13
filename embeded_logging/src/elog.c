@@ -60,7 +60,7 @@ static void elog_default_logger(const elog_msg_header_t* hdr,
     if (!g_elog.initialized) return;
 
     /* 写入 RingBuffer */
-    g_elog.ring_buf.base.log(&g_elog.ring_buf.base,
+    int ret = g_elog.ring_buf.base.log(&g_elog.ring_buf.base,
                               (elog_id_t)hdr->log_id,
                               (elog_level_t)hdr->level,
                               hdr->pid, hdr->tid, hdr->line,
@@ -68,6 +68,10 @@ static void elog_default_logger(const elog_msg_header_t* hdr,
 
     /* 更新统计 */
 #if ELOG_STATS_ENABLE
+    if (ret == ELOG_ERR_PRUNED) {
+        elog_stats_on_drop(&g_elog.stats, hdr->log_id);
+        return;
+    }
     elog_stats_on_log(&g_elog.stats, hdr->log_id, hdr->level);
     size_t buf_size = g_elog.ring_buf.base.size(&g_elog.ring_buf.base);
     elog_stats_update_usage(&g_elog.stats, (uint32_t)buf_size);
@@ -151,6 +155,10 @@ int elog_init(void) {
     int ret = elog_ring_buf_init(&g_elog.ring_buf, ELOG_BUFFER_SIZE);
     if (ret != ELOG_OK) return ret;
     g_elog.ring_buf_dynamic = true;
+
+#if ELOG_PRUNE_ENABLE
+    elog_ring_buf_set_prune(&g_elog.ring_buf, &g_elog.prune);
+#endif
 
     /* 初始化 Transport Registry */
     elog_transport_registry_init(&g_elog.registry);

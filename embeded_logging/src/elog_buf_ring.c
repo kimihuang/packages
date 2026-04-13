@@ -88,12 +88,25 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
     size_t total = entry_total_size(entry_len);
 
     /* 检查空间 */
+    /* 计算已用空间 (用于 prune 判断) */
+    size_t used_space;
     if (rb->write_pos >= rb->read_pos) {
-        /* [read...write...free...] */
+        used_space = rb->write_pos - rb->read_pos;
+    } else {
+        used_space = rb->buf_capacity - rb->read_pos + rb->write_pos;
+    }
+
+    if (rb->write_pos >= rb->read_pos) {
         size_t free_space = rb->buf_capacity - rb->write_pos + rb->read_pos;
         if (free_space < total) {
             if (!force && !rb->overwrite) {
                 return ELOG_ERR_FULL;
+            }
+            if (!force && rb->prune && tag &&
+                elog_prune_is_low_priority(rb->prune, tag) &&
+                elog_prune_should_prune(rb->prune, (uint32_t)used_space,
+                                        (uint32_t)rb->buf_capacity)) {
+                return ELOG_ERR_PRUNED;
             }
             /* 覆写: 推进 read_pos 直到有足够空间 */
             while ((rb->buf_capacity - rb->write_pos + rb->read_pos) < total && rb->count > 0) {
@@ -103,11 +116,16 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
             }
         }
     } else {
-        /* [free...write...read...] */
         size_t free_space = rb->read_pos - rb->write_pos;
         if (free_space < total) {
             if (!force && !rb->overwrite) {
                 return ELOG_ERR_FULL;
+            }
+            if (!force && rb->prune && tag &&
+                elog_prune_is_low_priority(rb->prune, tag) &&
+                elog_prune_should_prune(rb->prune, (uint32_t)used_space,
+                                        (uint32_t)rb->buf_capacity)) {
+                return ELOG_ERR_PRUNED;
             }
             while ((rb->read_pos - rb->write_pos) < total && rb->count > 0) {
                 uint32_t old_len = ring_read_u32(rb->buffer, rb->buf_capacity, rb->read_pos);
@@ -310,9 +328,6 @@ int elog_ring_buf_init_static(elog_ring_buf_t* rb, uint8_t* buf, size_t capacity
 
 void elog_ring_buf_destroy(elog_ring_buf_t* rb) {
     if (!rb) return;
-    /* 注意: 如果使用 init_static，不应 free buffer */
-    /* 这里简单处理: 只 free 动态分配的 buffer */
-    /* 通过写入 magic 标记区分 (简化: 始终 free) */
     elog_mutex_destroy(&rb->lock);
     elog_cond_destroy(&rb->not_empty);
     free(rb->buffer);
@@ -321,6 +336,11 @@ void elog_ring_buf_destroy(elog_ring_buf_t* rb) {
     rb->write_pos = 0;
     rb->read_pos = 0;
     rb->count = 0;
+    rb->prune = NULL;
+}
+
+void elog_ring_buf_set_prune(elog_ring_buf_t* rb, struct elog_prune* prune) {
+    if (rb) rb->prune = prune;
 }
 
 /* ISR 安全版本 */

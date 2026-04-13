@@ -4,6 +4,7 @@
  */
 
 #include "elog_prune.h"
+#include "elog_buf.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -134,6 +135,95 @@ static void test_prune_null(void) {
     assert(ret == 0);
 }
 
+/* ===== 集成测试: Prune + RingBuffer ===== */
+
+static int write_rb(elog_ring_buf_t* rb, const char* tag, const char* msg) {
+    return rb->base.log(&rb->base, ELOG_ID_MAIN, ELOG_LEVEL_INFO, 1, 1, 10, tag, msg);
+}
+
+static void test_prune_drop_low_priority(void) {
+    printf("  test_prune_drop_low_priority...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 50);  /* 50% threshold */
+    elog_prune_load_rules(&p, "~important noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Fill buffer to > 50% with important entries */
+    for (int i = 0; i < 8; i++) {
+        write_rb(&rb, "important", "keep this");
+    }
+
+    /* noisy entry should be dropped because buffer is over threshold */
+    int ret = write_rb(&rb, "noisy", "should drop");
+    assert(ret == ELOG_ERR_PRUNED);
+
+    /* important entry should still succeed (overwrite unprotected) */
+    ret = write_rb(&rb, "important", "still goes in");
+    assert(ret == ELOG_OK);
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static int count_flush_cb(const elog_msg_header_t* hdr,
+                           const char* tag, const char* msg, void* user) {
+    (void)hdr; (void)tag; (void)msg; (void)user;
+    return 0;
+}
+
+static void test_prune_protected_survives(void) {
+    printf("  test_prune_protected_survives...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 10);  /* very low threshold */
+    elog_prune_load_rules(&p, "~crash noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Fill with crash (protected) and noisy (low priority) entries */
+    write_rb(&rb, "crash", "must keep 1");
+    write_rb(&rb, "noisy", "can drop");
+    write_rb(&rb, "crash", "must keep 2");
+    write_rb(&rb, "noisy", "can drop 2");
+    write_rb(&rb, "crash", "must keep 3");
+
+    /* 5 entries in 256-byte buffer: no overwrite needed */
+    assert(rb.count == 5);
+
+    /* Verify flush works */
+    int flushed = elog_ring_buf_flush(&rb.base, count_flush_cb, NULL);
+    assert(flushed == 5);
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static void test_prune_below_threshold(void) {
+    printf("  test_prune_below_threshold...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 99);  /* 99% threshold - very high */
+    elog_prune_load_rules(&p, "noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Write a few entries - should not trigger prune */
+    int ret = write_rb(&rb, "noisy", "should NOT drop");
+    assert(ret == ELOG_OK);
+    ret = write_rb(&rb, "noisy", "also not dropped");
+    assert(ret == ELOG_OK);
+
+    assert(rb.count == 2);
+
+    elog_ring_buf_destroy(&rb);
+}
+
 int test_elog_prune(void) {
     printf("test_elog_prune:\n");
 
@@ -144,6 +234,9 @@ int test_elog_prune(void) {
     test_prune_get_rules();
     test_prune_should_prune();
     test_prune_null();
+    test_prune_drop_low_priority();
+    test_prune_protected_survives();
+    test_prune_below_threshold();
 
     return 0;
 }

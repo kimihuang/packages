@@ -50,6 +50,9 @@ typedef struct {
     /* Linux pthread 同步 */
     elog_mutex_t lock;
     elog_cond_t  not_empty;
+
+    /* Prune */
+    struct elog_prune* prune;            /* 裁剪策略 (可选, 由 set_prune 设置) */
 } elog_ring_buf_t;
 
 /**
@@ -101,6 +104,11 @@ int elog_ring_buf_flush_range(elog_ring_buf_t* rb, size_t from, size_t to,
                                int (*callback)(const elog_msg_header_t*,
                                                const char*, const char*, void*),
                                void* user);
+
+/**
+ * 设置裁剪策略
+ */
+void elog_ring_buf_set_prune(elog_ring_buf_t* rb, struct elog_prune* prune);
 
 #ifdef __cplusplus
 }

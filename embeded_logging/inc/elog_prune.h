@@ -22,12 +22,12 @@ typedef struct {
     bool     negated;                /* true: 保护 (~前缀); false: 低优先级 */
 } elog_prune_rule_t;
 
-typedef struct {
-    elog_prune_rule_t high_rules[ELOG_MAX_PRUNE_RULES];   /* 保护规则 */
+typedef struct elog_prune {
+    elog_prune_rule_t high_rules[ELOG_MAX_PRUNE_RULES];
     uint8_t          high_count;
-    elog_prune_rule_t low_rules[ELOG_MAX_PRUNE_RULES];    /* 低优先级规则 */
+    elog_prune_rule_t low_rules[ELOG_MAX_PRUNE_RULES];
     uint8_t          low_count;
-    uint32_t         threshold_pct;  /* 触发裁剪的阈值 (%) */
+    uint32_t         threshold_pct;
 } elog_prune_t;
 
 /**

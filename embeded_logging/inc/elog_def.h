@@ -134,6 +134,7 @@ typedef enum {
 #define ELOG_ERR_NOT_INIT  -4
 #define ELOG_ERR_OVERFLOW  -5
 #define ELOG_ERR_BUSY      -6
+#define ELOG_ERR_PRUNED    -7
 
 /* ===== 内部辅助宏 ===== */
 #define ELOG_MIN(a, b)      ((a) < (b) ? (a) : (b))
