@@ -3,9 +3,10 @@
  * @brief elogcat — 日志查看 CLI 工具 (对标 Android logcat)
  *
  * 用法:
- *   elogcat [-d] [-t N] [-s TAG] [--pid PID] [-v format] [-B] [-c] [-g] [-G SIZE]
+ *   elogcat [-d] [-t N] [-s TAG] [--pid PID] [-v format] [-b BUFFER] [-B] [-c] [-g] [-G SIZE]
  *
  * 连接 elogd reader socket (SOCK_SEQPACKET), 接收二进制日志并格式化输出。
+ * -b 可多次使用: -b main -b crash
  */
 
 #include "elog_def.h"
@@ -36,6 +37,7 @@ static struct {
     bool  clear;          /* -c: 清空 */
     bool  get_size;       /* -g: 获取 buffer 大小 */
     uint32_t set_size;    /* -G: 设置 buffer 大小, 0 = 不设置 */
+    uint32_t log_mask;    /* -b: buffer 订阅 bitmask, 0 = 全部 */
 } g_cfg;
 
 static volatile bool g_running = true;
@@ -54,6 +56,8 @@ static void usage(const char* prog) {
            "  --pid PID     Filter by PID\n"
            "  -v format     Output format: color (default), brief\n"
            "  -B            Binary output\n"
+           "  -b BUFFER     Select log buffer (main,radio,events,system,crash,kernel)\n"
+           "                  Can be used multiple times (default: all)\n"
            "  -c            Clear log buffer\n"
            "  -g            Get buffer size\n"
            "  -G SIZE       Set buffer size\n"
@@ -72,7 +76,7 @@ static void parse_args(int argc, char* argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "dt:s:v:BcgG:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dt:s:v:Bb:cgG:h", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'd': g_cfg.dump = true; break;
         case 't': g_cfg.tail = atoi(optarg); break;
@@ -87,6 +91,29 @@ static void parse_args(int argc, char* argv[]) {
             else g_cfg.color = true;
             break;
         case 'B': g_cfg.binary = true; break;
+        case 'b': {
+            /* 查找 buffer 名称, 支持多次使用累加 */
+            bool found = false;
+            for (int i = 0; i < ELOG_ID_MAX; i++) {
+                if (strcmp(optarg, elogd_buf_name((elog_id_t)i)) == 0) {
+                    g_cfg.log_mask |= (1u << i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                /* 支持数字 ID */
+                char* end;
+                long val = strtol(optarg, &end, 10);
+                if (end != optarg && val >= 0 && val < ELOG_ID_MAX) {
+                    g_cfg.log_mask |= (1u << val);
+                } else {
+                    fprintf(stderr, "elogcat: unknown buffer '%s'\n", optarg);
+                    exit(1);
+                }
+            }
+            break;
+        }
         case 'c': g_cfg.clear = true; break;
         case 'g': g_cfg.get_size = true; break;
         case 'G': g_cfg.set_size = (uint32_t)atoi(optarg); break;
@@ -190,6 +217,7 @@ static int run_logcat(void) {
     req.count = (g_cfg.dump || g_cfg.tail > 0) ? (uint32_t)g_cfg.tail : 0;
     req.min_level = 0;
     req.pid_filter = g_cfg.pid_filter;
+    req.log_mask = g_cfg.log_mask;  /* 0 = 全部, bitmask = 指定 */
     req.timeout_ms = g_cfg.dump ? 100 : 0;  /* dump 模式 100ms 超时 */
 
     if (send(fd, &req, sizeof(req), 0) < 0) {

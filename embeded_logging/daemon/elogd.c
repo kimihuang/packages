@@ -41,10 +41,6 @@ static const size_t k_default_buf_sizes[ELOG_ID_MAX] = {
     [ELOG_ID_KERNEL] = 64  * 1024,
 };
 
-static const char* k_buf_names[ELOG_ID_MAX] = {
-    "main", "radio", "events", "system", "crash", "kernel"
-};
-
 elog_ring_buf_t* g_daemon_rb = &s_daemon_rbs[0];  /* 向后兼容 */
 volatile bool g_daemon_running = false;
 
@@ -57,11 +53,6 @@ elog_ring_buf_t* elogd_get_buf(elog_id_t id) {
 size_t elogd_get_buf_size(elog_id_t id) {
     if (id >= ELOG_ID_MAX) id = ELOG_ID_MAIN;
     return s_buf_sizes[id];
-}
-
-const char* elogd_buf_name(elog_id_t id) {
-    if (id >= ELOG_ID_MAX) id = ELOG_ID_MAIN;
-    return k_buf_names[id];
 }
 
 /* ===== Socket 路径 (运行时可覆盖) ===== */
@@ -103,7 +94,7 @@ int elogd_run(void) {
         int ret = elog_ring_buf_init(&s_daemon_rbs[i], s_buf_sizes[i]);
         if (ret != ELOG_OK) {
             fprintf(stderr, "elogd: ring buf[%s] init failed (%d)\n",
-                    k_buf_names[i], ret);
+                    elogd_buf_name((elog_id_t)i), ret);
             return ret;
         }
 #if ELOG_PRUNE_ENABLE
@@ -111,7 +102,7 @@ int elogd_run(void) {
         elog_prune_load_rules(&s_daemon_prunes[i], "~elogd ~crash");
         elog_ring_buf_set_prune(&s_daemon_rbs[i], &s_daemon_prunes[i]);
 #endif
-        printf("elogd:   %s  %zuKB\n", k_buf_names[i], s_buf_sizes[i] / 1024);
+        printf("elogd:   %s  %zuKB\n", elogd_buf_name((elog_id_t)i), s_buf_sizes[i] / 1024);
     }
 
     g_daemon_running = true;

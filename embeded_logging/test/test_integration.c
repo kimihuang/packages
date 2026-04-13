@@ -66,7 +66,7 @@ static int start_elogd(void) {
     }
     s_elogd_pid = pid;
 
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 100; i++) {
         usleep(20000);
         int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
         if (fd < 0) continue;

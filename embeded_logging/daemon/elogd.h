@@ -95,9 +95,18 @@ typedef struct {
 } elog_read_request_t;
 #pragma pack(pop)
 
-/* ===== 多 Buffer API (由 elogd.c 定义) ===== */
+/* ===== 多 Buffer API ===== */
 
-/** 获取指定 log_id 对应的 ring buffer */
+/** buffer ID 名称 (daemon 和 client 均可使用) */
+static inline const char* elogd_buf_name(elog_id_t id) {
+    static const char* names[ELOG_ID_MAX] = {
+        "main", "radio", "events", "system", "crash", "kernel"
+    };
+    if (id >= ELOG_ID_MAX) id = ELOG_ID_MAIN;
+    return names[id];
+}
+
+/** 获取指定 log_id 对应的 ring buffer (仅 daemon 内部) */
 elog_ring_buf_t* elogd_get_buf(elog_id_t id);
 
 /** 获取指定 log_id 的 buffer 容量 */
