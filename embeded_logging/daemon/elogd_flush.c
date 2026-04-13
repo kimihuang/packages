@@ -1,6 +1,6 @@
 /**
  * @file elogd_flush.c
- * @brief Flusher — 从 ring buffer 读取日志，格式化后写入 file transport
+ * @brief Flusher — 遍历所有 log buffer, 格式化后写入各自独立文件
  */
 
 #include "elogd.h"
@@ -12,8 +12,13 @@
 #include <stdio.h>
 #include <unistd.h>
 
-extern elog_ring_buf_t* g_daemon_rb;
 extern volatile bool g_daemon_running;
+
+/* 每 buffer 独立的 flush 状态 */
+typedef struct {
+    elog_file_transport_t* transport;
+    size_t read_pos;
+} buf_flush_t;
 
 typedef struct {
     elog_file_transport_t* transport;
@@ -38,12 +43,10 @@ static int flush_to_file_cb(const elog_msg_header_t* hdr,
     return 0;
 }
 
-/* entry 总大小 (4B prefix + aligned entry_len) */
 static size_t entry_total_size(uint32_t entry_len) {
     return 4 + ((entry_len + 3) & ~3U);
 }
 
-/* 读取 entry_len 前缀 (处理环形边界) */
 static uint32_t ring_read_u32(const uint8_t* buf, size_t cap, size_t pos) {
     uint32_t val;
     if (pos + 4 <= cap) {
@@ -58,7 +61,6 @@ static uint32_t ring_read_u32(const uint8_t* buf, size_t cap, size_t pos) {
     return val;
 }
 
-/* 手动推进 read_pos 跳过已消费的条目 */
 static size_t advance_read_pos(const uint8_t* buf, size_t cap,
                                 size_t from, size_t to) {
     size_t pos = from;
@@ -74,62 +76,80 @@ static size_t advance_read_pos(const uint8_t* buf, size_t cap,
 
 void* elogd_flusher_thread(void* arg) {
     (void)arg;
-    elog_file_transport_t file_transport;
-    elog_file_transport_init(&file_transport, ELOG_DAEMON_LOG_FILE, 0, 0);
-    file_transport.base.open(&file_transport.base);
 
-    /* 从 tail 开始 (不重复已有日志) */
-    size_t my_read_pos = 0;
-    if (g_daemon_rb) {
-        elog_mutex_lock(&g_daemon_rb->lock);
-        my_read_pos = g_daemon_rb->write_pos;
-        elog_mutex_unlock(&g_daemon_rb->lock);
+    /* 每 buffer 独立文件 */
+    static const char* k_log_files[ELOG_ID_MAX] = {
+        "/var/log/elog_main.log",
+        "/var/log/elog_radio.log",
+        "/var/log/elog_events.log",
+        "/var/log/elog_system.log",
+        "/var/log/elog_crash.log",
+        "/var/log/elog_kernel.log",
+    };
+
+    elog_file_transport_t transports[ELOG_ID_MAX];
+    buf_flush_t buf_states[ELOG_ID_MAX];
+
+    for (int i = 0; i < ELOG_ID_MAX; i++) {
+        elog_file_transport_init(&transports[i], k_log_files[i], 0, 0);
+        transports[i].base.open(&transports[i].base);
+
+        buf_states[i].transport = &transports[i];
+        buf_states[i].read_pos = 0;
+
+        elog_ring_buf_t* rb = elogd_get_buf((elog_id_t)i);
+        if (rb) {
+            elog_mutex_lock(&rb->lock);
+            buf_states[i].read_pos = rb->write_pos;  /* 从 tail 开始 */
+            elog_mutex_unlock(&rb->lock);
+        }
     }
 
     while (g_daemon_running) {
-        if (!g_daemon_rb) {
-            usleep(100000);
-            continue;
+        for (int bid = 0; bid < ELOG_ID_MAX; bid++) {
+            elog_ring_buf_t* rb = elogd_get_buf((elog_id_t)bid);
+            if (!rb) continue;
+
+            elog_mutex_lock(&rb->lock);
+
+            if (buf_states[bid].read_pos != rb->write_pos) {
+                flush_ctx_t ctx = { .transport = &transports[bid], .count = 0 };
+                size_t end = rb->write_pos;
+
+                elog_ring_buf_flush_range(rb, buf_states[bid].read_pos, end,
+                                           flush_to_file_cb, &ctx);
+
+                buf_states[bid].read_pos = advance_read_pos(
+                    rb->buffer, rb->buf_capacity,
+                    buf_states[bid].read_pos, end);
+
+                transports[bid].base.flush(&transports[bid].base);
+            }
+
+            elog_mutex_unlock(&rb->lock);
         }
 
-        elog_mutex_lock(&g_daemon_rb->lock);
-
-        /* 等待新数据 */
-        while (my_read_pos == g_daemon_rb->write_pos && g_daemon_running) {
-            elog_cond_timedwait(&g_daemon_rb->not_empty, &g_daemon_rb->lock, 1000);
-        }
-
-        if (my_read_pos != g_daemon_rb->write_pos) {
-            flush_ctx_t ctx = { .transport = &file_transport, .count = 0 };
-            size_t end = g_daemon_rb->write_pos;
-
-            elog_ring_buf_flush_range(g_daemon_rb, my_read_pos, end,
-                                       flush_to_file_cb, &ctx);
-
-            /* 推进 read_pos */
-            my_read_pos = advance_read_pos(g_daemon_rb->buffer,
-                                            g_daemon_rb->buf_capacity,
-                                            my_read_pos, end);
-            file_transport.base.flush(&file_transport.base);
-        }
-
-        elog_mutex_unlock(&g_daemon_rb->lock);
+        usleep(500000);  /* 500ms 轮询间隔 */
     }
 
     /* 退出前 flush 剩余数据 */
-    if (g_daemon_rb) {
-        elog_mutex_lock(&g_daemon_rb->lock);
-        if (my_read_pos != g_daemon_rb->write_pos) {
-            flush_ctx_t ctx = { .transport = &file_transport, .count = 0 };
-            elog_ring_buf_flush_range(g_daemon_rb, my_read_pos,
-                                       g_daemon_rb->write_pos,
+    for (int bid = 0; bid < ELOG_ID_MAX; bid++) {
+        elog_ring_buf_t* rb = elogd_get_buf((elog_id_t)bid);
+        if (!rb) continue;
+
+        elog_mutex_lock(&rb->lock);
+        if (buf_states[bid].read_pos != rb->write_pos) {
+            flush_ctx_t ctx = { .transport = &transports[bid], .count = 0 };
+            elog_ring_buf_flush_range(rb, buf_states[bid].read_pos,
+                                       rb->write_pos,
                                        flush_to_file_cb, &ctx);
-            file_transport.base.flush(&file_transport.base);
+            transports[bid].base.flush(&transports[bid].base);
         }
-        elog_mutex_unlock(&g_daemon_rb->lock);
+        elog_mutex_unlock(&rb->lock);
+
+        transports[bid].base.close(&transports[bid].base);
+        elog_file_transport_deinit(&transports[bid]);
     }
 
-    file_transport.base.close(&file_transport.base);
-    elog_file_transport_deinit(&file_transport);
     return NULL;
 }

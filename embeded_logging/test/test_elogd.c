@@ -345,6 +345,31 @@ static void test_reader_sock_paths(void) {
     assert(strcmp(ELOG_DAEMON_SOCK_PATH, ELOG_DAEMON_READER_SOCK) != 0);
 }
 
+/* ===== 多 Buffer 单元测试 ===== */
+
+static void test_multi_buf_log_mask_filtering(void) {
+    printf("  test_multi_buf_log_mask_filtering...");
+
+    /* 模拟 send_log_entry 的 log_mask 过滤逻辑 */
+    elog_msg_header_t hdr_main, hdr_radio;
+    memset(&hdr_main, 0, sizeof(hdr_main));
+    hdr_main.log_id = ELOG_ID_MAIN;
+    memset(&hdr_radio, 0, sizeof(hdr_radio));
+    hdr_radio.log_id = ELOG_ID_RADIO;
+
+    /* mask=0 → 全部通过 */
+    uint32_t mask_all = 0;
+    assert((mask_all == 0) || (mask_all & (1 << hdr_main.log_id)));
+    assert((mask_all == 0) || (mask_all & (1 << hdr_radio.log_id)));
+
+    /* mask=1<<MAIN → 只有 MAIN 通过 */
+    uint32_t mask_main_only = (1 << ELOG_ID_MAIN);
+    assert(mask_main_only & (1 << hdr_main.log_id));
+    assert(!(mask_main_only & (1 << hdr_radio.log_id)));
+
+    printf("  PASS\n");
+}
+
 int test_elogd(void) {
     printf("test_elogd:\n");
 
@@ -360,6 +385,7 @@ int test_elogd(void) {
     test_read_request_wire_roundtrip();
     test_datagram_entry_size();
     test_reader_sock_paths();
+    test_multi_buf_log_mask_filtering();
 
     return 0;
 }

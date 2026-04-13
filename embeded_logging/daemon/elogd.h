@@ -8,6 +8,7 @@
 
 #include "elog_def.h"
 #include "elog_port.h"
+#include "elog_buf.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,7 +34,7 @@ extern const char* g_daemon_reader_sock;
 
 /* Daemon 缓冲区大小 (独立于 ELOG_BUFFER_SIZE) */
 #ifndef ELOG_DAEMON_BUFFER_SIZE
-#define ELOG_DAEMON_BUFFER_SIZE  (256 * 1024)  /* 256KB */
+#define ELOG_DAEMON_BUFFER_SIZE  (256 * 1024)  /* 256KB (MAIN 默认) */
 #endif
 
 /* Daemon 日志文件路径 */
@@ -90,8 +91,20 @@ typedef struct {
     uint8_t  min_level;     /* 最低级别过滤, 0 = 全部 */
     uint16_t pid_filter;    /* PID 过滤, 0 = 不过滤 */
     uint32_t timeout_ms;    /* 阻塞超时, 0 = 永久阻塞 */
+    uint32_t log_mask;      /* 订阅 bitmask, bit i = 订阅 buffer i, 0 = 全部 */
 } elog_read_request_t;
 #pragma pack(pop)
+
+/* ===== 多 Buffer API (由 elogd.c 定义) ===== */
+
+/** 获取指定 log_id 对应的 ring buffer */
+elog_ring_buf_t* elogd_get_buf(elog_id_t id);
+
+/** 获取指定 log_id 的 buffer 容量 */
+size_t elogd_get_buf_size(elog_id_t id);
+
+/** buffer ID 名称 */
+const char* elogd_buf_name(elog_id_t id);
 
 #ifdef __cplusplus
 }

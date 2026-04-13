@@ -96,10 +96,17 @@ static void stop_elogd(void) {
 
 /* ===== 直接构造 datagram 并发送 ===== */
 
+static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level);
+
 static int send_log(const char* tag, const char* msg, uint8_t level) {
+    return send_log_ex(ELOG_ID_MAIN, tag, msg, level);
+}
+
+/* 指定 log_id 发送日志 */
+static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level) {
     elog_msg_header_t hdr;
     memset(&hdr, 0, sizeof(hdr));
-    hdr.log_id = ELOG_ID_MAIN;
+    hdr.log_id = log_id;
     hdr.level = level;
     hdr.tag_len = (uint16_t)(tag ? strlen(tag) : 0);
     hdr.msg_len = (uint16_t)(msg ? strlen(msg) : 0);
@@ -127,8 +134,11 @@ typedef struct {
     char msg[256];
 } log_entry_t;
 
-/* 从 reader socket 读取所有匹配 tag 的条目 (tail=0, count=0) */
-static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max) {
+/* 带log_mask 读取 (mask=0 全部, mask=(1<<id) 只读指定 buffer) */
+static int reader_read_by_tag_mask(const char* tag_filter, uint32_t log_mask,
+                                    log_entry_t* out, int max);
+static int reader_read_by_tag_mask(const char* tag_filter, uint32_t log_mask,
+                                    log_entry_t* out, int max) {
     int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
 
@@ -136,7 +146,7 @@ static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max)
     strncpy(addr.sun_path, s_reader_sock, sizeof(addr.sun_path) - 1);
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
 
-    elog_read_request_t req = { .version = ELOG_READ_PROTOCOL_VERSION };
+    elog_read_request_t req = { .version = ELOG_READ_PROTOCOL_VERSION, .log_mask = log_mask };
     if (send(fd, &req, sizeof(req), 0) < 0) { close(fd); return -1; }
 
     struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
@@ -165,6 +175,11 @@ static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max)
     }
     close(fd);
     return n;
+}
+
+/* 便捷: 读全部 (log_mask=0) */
+static int reader_read_by_tag(const char* tag_filter, log_entry_t* out, int max) {
+    return reader_read_by_tag_mask(tag_filter, 0, out, max);
 }
 
 /* ===== 测试用例 ===== */
@@ -282,6 +297,100 @@ static void test_e2e_cmd_stats(void) {
     T_OK("e2e cmd stats");
 }
 
+static void test_e2e_multi_buffer(void) {
+    printf("  test_e2e_multi_buffer...\n");
+
+    /* 向不同 buffer 写入, 用唯一 tag */
+    send_log_ex(ELOG_ID_MAIN, "mb_main", "hello_main", ELOG_LEVEL_INFO);
+    send_log_ex(ELOG_ID_RADIO, "mb_radio", "hello_radio", ELOG_LEVEL_INFO);
+    send_log_ex(ELOG_ID_SYSTEM, "mb_system", "hello_system", ELOG_LEVEL_INFO);
+    usleep(200000);
+
+    /* 各自读到自己的 */
+    log_entry_t e_main[10], e_radio[10], e_system[10];
+    int n1 = reader_read_by_tag("mb_main", e_main, 10);
+    int n2 = reader_read_by_tag("mb_radio", e_radio, 10);
+    int n3 = reader_read_by_tag("mb_system", e_system, 10);
+
+    T_ASSERT(n1 >= 1, "main entries found");
+    T_ASSERT(n2 >= 1, "radio entries found");
+    T_ASSERT(n3 >= 1, "system entries found");
+    T_ASSERT(e_main[0].hdr.log_id == ELOG_ID_MAIN, "main log_id correct");
+    T_ASSERT(e_radio[0].hdr.log_id == ELOG_ID_RADIO, "radio log_id correct");
+    T_ASSERT(e_system[0].hdr.log_id == ELOG_ID_SYSTEM, "system log_id correct");
+    T_OK("e2e multi buffer");
+}
+
+static void test_e2e_log_mask(void) {
+    printf("  test_e2e_log_mask...\n");
+
+    /* 向 3 个 buffer 写入 */
+    send_log_ex(ELOG_ID_MAIN, "lm_main", "m", ELOG_LEVEL_INFO);
+    send_log_ex(ELOG_ID_RADIO, "lm_radio", "r", ELOG_LEVEL_INFO);
+    send_log_ex(ELOG_ID_CRASH, "lm_crash", "c", ELOG_LEVEL_INFO);
+    usleep(200000);
+
+    /* 只订阅 RADIO, 不应收到 MAIN 或 CRASH */
+    log_entry_t entries[10];
+    int n = reader_read_by_tag_mask(NULL, (1 << ELOG_ID_RADIO), entries, 10);
+    T_ASSERT(n >= 1, "radio entries received");
+    for (int i = 0; i < n; i++) {
+        T_ASSERT(entries[i].hdr.log_id == ELOG_ID_RADIO, "all are RADIO");
+    }
+    T_OK("e2e log mask");
+}
+
+static void test_e2e_buffer_stats(void) {
+    printf("  test_e2e_buffer_stats...\n");
+
+    /* 向 3 个 buffer 各写一条 */
+    send_log_ex(ELOG_ID_MAIN, "bs_main", "x", ELOG_LEVEL_INFO);
+    send_log_ex(ELOG_ID_RADIO, "bs_radio", "y", ELOG_LEVEL_INFO);
+    usleep(200000);
+
+    /* stats 命令应返回多行, 每行一个 buffer */
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    T_ASSERT(fd >= 0, "socket");
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, s_cmd_sock, sizeof(addr.sun_path) - 1);
+    int ret = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+    T_ASSERT(ret == 0, "connect");
+
+    write(fd, "stats\n", 6);
+    char resp[2048] = {0};
+    int total = 0;
+    while (total < (int)sizeof(resp) - 1) {
+        ssize_t r = read(fd, resp + total, sizeof(resp) - 1 - total);
+        if (r <= 0) break;
+        total += (int)r;
+    }
+    close(fd);
+
+    T_ASSERT(strstr(resp, "main") != NULL, "stats has 'main'");
+    T_ASSERT(strstr(resp, "radio") != NULL, "stats has 'radio'");
+    T_ASSERT(strstr(resp, "events") != NULL, "stats has 'events'");
+    T_ASSERT(strstr(resp, "system") != NULL, "stats has 'system'");
+    T_ASSERT(strstr(resp, "crash") != NULL, "stats has 'crash'");
+    T_ASSERT(strstr(resp, "kernel") != NULL, "stats has 'kernel'");
+
+    /* 指定 buffer 查询 */
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+    write(fd, "stats radio\n", 12);
+    memset(resp, 0, sizeof(resp));
+    total = 0;
+    while (total < (int)sizeof(resp) - 1) {
+        ssize_t r = read(fd, resp + total, sizeof(resp) - 1 - total);
+        if (r <= 0) break;
+        total += (int)r;
+    }
+    close(fd);
+
+    T_ASSERT(strstr(resp, "radio") != NULL, "stats radio has 'radio'");
+    T_ASSERT(strstr(resp, "main") == NULL, "stats radio has no 'main'");
+    T_OK("e2e buffer stats");
+}
+
 /* ===== main ===== */
 
 int main(void) {
@@ -298,6 +407,9 @@ int main(void) {
     test_e2e_header_fields();
     test_e2e_multi_entries();
     test_e2e_cmd_stats();
+    test_e2e_multi_buffer();
+    test_e2e_log_mask();
+    test_e2e_buffer_stats();
 
     stop_elogd();
 

@@ -16,7 +16,6 @@
 #include <sys/un.h>
 
 /* 共享状态 (由 elogd.c 定义) */
-extern elog_ring_buf_t* g_daemon_rb;
 extern volatile bool g_daemon_running;
 
 void* elogd_listener_thread(void* arg) {
@@ -88,10 +87,14 @@ void* elogd_listener_thread(void* arg) {
             memcpy(msg_buf, buf + msg_off, hdr.msg_len);
         }
 
-        /* 写入 ring buffer (使用客户端提供的 pid/tid) */
-        if (g_daemon_rb) {
-            int ret = elog_ring_buf_log_from(&g_daemon_rb->base,
-                (elog_id_t)hdr.log_id, (elog_level_t)hdr.level,
+        /* 按 log_id 路由到对应 buffer (非法 ID 降级到 MAIN) */
+        elog_id_t id = (elog_id_t)hdr.log_id;
+        if (id >= ELOG_ID_MAX) id = ELOG_ID_MAIN;
+
+        elog_ring_buf_t* target = elogd_get_buf(id);
+        if (target) {
+            int ret = elog_ring_buf_log_from(&target->base,
+                id, (elog_level_t)hdr.level,
                 hdr.pid, hdr.tid, hdr.line, tag_buf, msg_buf);
             if (ret != ELOG_OK) {
                 /* prune drop 或 buffer full, 静默忽略 */
