@@ -16,6 +16,9 @@
 #if ELOG_PRUNE_ENABLE
 #include "elog_prune.h"
 #endif
+#if ELOG_DAEMON_ENABLE
+#include "elogd.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,12 +62,25 @@ static void elog_default_logger(const elog_msg_header_t* hdr,
                                  const char* tag, const char* msg) {
     if (!g_elog.initialized) return;
 
+#if ELOG_DAEMON_ENABLE
+    /* daemon 模式: 通过 Unix Socket 发送到 elogd */
+    int ret = elogd_client_send(hdr, tag, msg);
+    if (ret != ELOG_OK) {
+        /* daemon 不可达, 回退到本地 ring buffer */
+        ret = g_elog.ring_buf.base.log(&g_elog.ring_buf.base,
+                              (elog_id_t)hdr->log_id,
+                              (elog_level_t)hdr->level,
+                              hdr->pid, hdr->tid, hdr->line,
+                              tag, msg);
+    }
+#else
     /* 写入 RingBuffer */
     int ret = g_elog.ring_buf.base.log(&g_elog.ring_buf.base,
                               (elog_id_t)hdr->log_id,
                               (elog_level_t)hdr->level,
                               hdr->pid, hdr->tid, hdr->line,
                               tag, msg);
+#endif
 
     /* 更新统计 */
 #if ELOG_STATS_ENABLE

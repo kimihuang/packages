@@ -118,4 +118,9 @@ extern "C" {
 #define ELOG_PORT_LINUX            1        /* 1: Linux, 0: Bare-metal */
 #endif
 
+/* ===== elogd 守护进程配置 ===== */
+#ifndef ELOG_DAEMON_ENABLE
+#define ELOG_DAEMON_ENABLE         0        /* 客户端: 通过 socket 发送日志到 elogd */
+#endif
+
 #endif /* ELOG_CONFIG_H */

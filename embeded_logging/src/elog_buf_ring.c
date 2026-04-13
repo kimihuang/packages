@@ -69,7 +69,8 @@ static void ring_write(uint8_t* buf, size_t cap, size_t pos,
 /* 写入条目到 buffer (不加锁版本) */
 static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level_t level,
                                 uint16_t line, const char* tag, const char* msg,
-                                bool force) {
+                                bool force, bool use_provided_ids,
+                                uint16_t prov_pid, uint16_t prov_tid) {
     uint16_t tag_len = tag ? (uint16_t)ELOG_MIN(strlen(tag), ELOG_MAX_TAG_LEN - 1) : 0;
     uint16_t msg_len = msg ? (uint16_t)ELOG_MIN(strlen(msg), ELOG_MAX_MSG_LEN - 1) : 0;
 
@@ -78,8 +79,8 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
     hdr.log_id = (uint8_t)log_id;
     hdr.level = (uint8_t)level;
     hdr.timestamp = (uint32_t)elog_port_now();
-    hdr.pid = elog_port_getpid();
-    hdr.tid = elog_port_gettid();
+    hdr.pid = use_provided_ids ? prov_pid : elog_port_getpid();
+    hdr.tid = use_provided_ids ? prov_tid : elog_port_gettid();
     hdr.line = line;
     hdr.tag_len = tag_len;
     hdr.msg_len = msg_len;
@@ -166,7 +167,22 @@ int elog_ring_buf_log(elog_buf_t* self, elog_id_t log_id, elog_level_t level,
     if (!rb || !rb->buffer) return ELOG_ERR_NOT_INIT;
 
     elog_mutex_lock(&rb->lock);
-    int ret = ring_write_unlocked(rb, log_id, level, line, tag, msg, false);
+    int ret = ring_write_unlocked(rb, log_id, level, line, tag, msg, false, false, 0, 0);
+    if (ret == ELOG_OK) {
+        elog_cond_signal(&rb->not_empty);
+    }
+    elog_mutex_unlock(&rb->lock);
+    return ret;
+}
+
+int elog_ring_buf_log_from(elog_buf_t* self, elog_id_t log_id, elog_level_t level,
+                            uint16_t pid, uint16_t tid, uint16_t line,
+                            const char* tag, const char* msg) {
+    elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
+    if (!rb || !rb->buffer) return ELOG_ERR_NOT_INIT;
+
+    elog_mutex_lock(&rb->lock);
+    int ret = ring_write_unlocked(rb, log_id, level, line, tag, msg, false, true, pid, tid);
     if (ret == ELOG_OK) {
         elog_cond_signal(&rb->not_empty);
     }
@@ -349,5 +365,5 @@ int elog_ring_buf_log_isr(elog_ring_buf_t* rb, elog_id_t log_id, elog_level_t le
                            const char* tag, const char* msg) {
     if (!rb || !rb->buffer) return ELOG_ERR_NOT_INIT;
     /* ISR 中不加锁，直接写入，强制覆写 */
-    return ring_write_unlocked(rb, log_id, level, line, tag, msg, true);
+    return ring_write_unlocked(rb, log_id, level, line, tag, msg, true, false, 0, 0);
 }

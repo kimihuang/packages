@@ -27,6 +27,16 @@ set(ELOG_SOURCES
 
 add_library(elog STATIC ${ELOG_SOURCES})
 
+# ===== elogd 守护进程 =====
+add_executable(elogd
+    daemon/elogd.c
+    daemon/elogd_listener.c
+    daemon/elogd_cmd.c
+    daemon/elogd_flush.c
+)
+target_link_libraries(elogd PRIVATE elog)
+target_include_directories(elogd PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
+
 # ===== 测试 =====
 enable_testing()
 
@@ -42,6 +52,7 @@ set(TEST_SOURCES
     test/test_elog_transport_file.c
     test/test_elog_port.c
     test/test_elog_reader.c
+    test/test_elogd.c
 )
 
 add_executable(elog_test ${TEST_SOURCES})
