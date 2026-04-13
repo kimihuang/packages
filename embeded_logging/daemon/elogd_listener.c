@@ -8,6 +8,7 @@
 #include "elogd.h"
 #include "elog_buf.h"
 #include "elog_def.h"
+#include "elog_debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -87,13 +88,20 @@ void* elogd_listener_thread(void* arg) {
             memcpy(msg_buf, buf + msg_off, hdr.msg_len);
         }
 
+        ELOG_DBG_LISTENER("recv: log_id=%u pid=%u tid=%u tag_len=%u msg_len=%u",
+                           hdr.log_id, hdr.pid, hdr.tid, hdr.tag_len, hdr.msg_len);
+
         /* 按 log_id 路由到对应 buffer (非法 ID 降级到 MAIN) */
         elog_id_t id = (elog_id_t)hdr.log_id;
-        if (id >= ELOG_ID_MAX) id = ELOG_ID_MAIN;
+        if (id >= ELOG_ID_MAX) {
+            ELOG_DBG_LISTENER("invalid log_id=%u remapped to MAIN", hdr.log_id);
+            id = ELOG_ID_MAIN;
+        }
 
         elog_ring_buf_t* target = elogd_get_buf(id);
         if (target) {
             int ret;
+            ELOG_DBG_LISTENER("dispatch: id=%u binary=%d", id, (id == ELOG_ID_EVENTS));
             if (id == ELOG_ID_EVENTS) {
                 /* Binary-safe: 使用 explicit msg_len, 不用 strlen */
                 ret = elog_ring_buf_log_from_binary(&target->base,
@@ -106,7 +114,7 @@ void* elogd_listener_thread(void* arg) {
                     hdr.pid, hdr.tid, hdr.line, tag_buf, msg_buf);
             }
             if (ret != ELOG_OK) {
-                /* prune drop 或 buffer full, 静默忽略 */
+                ELOG_DBG_LISTENER("write error: id=%u ret=%d", id, ret);
             }
         }
     }

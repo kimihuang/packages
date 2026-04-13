@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "elog_debug.h"
 
 #define EVENT_HDR_SIZE  (sizeof(uint32_t) + 2)  /* event_id + type + count */
 
@@ -68,6 +69,7 @@ void elog_event_destroy(elog_event_ctx_t* ctx) {
 static int ensure_space(elog_event_ctx_t* ctx, size_t needed) {
     if (!ctx || ctx->overflow) return ELOG_ERR_OVERFLOW;
     if (ctx->pos + needed > ELOG_EVENT_STORAGE_SIZE) {
+        ELOG_DBG_EVENT("overflow: pos=%u needed=%zu storage=%d", ctx->pos, needed, ELOG_EVENT_STORAGE_SIZE);
         ctx->overflow = true;
         return ELOG_ERR_OVERFLOW;
     }
@@ -91,6 +93,7 @@ int elog_event_add_int32(elog_event_ctx_t* ctx, int32_t value) {
     memcpy(ctx->storage + ctx->pos, &value, sizeof(value));
     ctx->pos += sizeof(value);
     inc_count(ctx);
+    ELOG_DBG_EVENT("add int32=%d (pos=%u)", value, ctx->pos);
     return ELOG_OK;
 }
 
@@ -102,6 +105,7 @@ int elog_event_add_int64(elog_event_ctx_t* ctx, int64_t value) {
     memcpy(ctx->storage + ctx->pos, &value, sizeof(value));
     ctx->pos += sizeof(value);
     inc_count(ctx);
+    ELOG_DBG_EVENT("add int64=%lld (pos=%u)", (long long)value, ctx->pos);
     return ELOG_OK;
 }
 
@@ -113,6 +117,7 @@ int elog_event_add_float(elog_event_ctx_t* ctx, float value) {
     memcpy(ctx->storage + ctx->pos, &value, sizeof(value));
     ctx->pos += sizeof(value);
     inc_count(ctx);
+    ELOG_DBG_EVENT("add float=%.4g (pos=%u)", (double)value, ctx->pos);
     return ELOG_OK;
 }
 
@@ -129,6 +134,7 @@ int elog_event_add_string(elog_event_ctx_t* ctx, const char* str) {
     memcpy(ctx->storage + ctx->pos, str, slen);
     ctx->pos += slen;
     inc_count(ctx);
+    ELOG_DBG_EVENT("add string=\"%.*s\" len=%u (pos=%u)", (int)ELOG_MIN(slen,20), str, slen, ctx->pos);
     return ELOG_OK;
 }
 
@@ -155,6 +161,7 @@ int elog_event_list_begin(elog_event_ctx_t* ctx) {
     ctx->storage[ctx->pos++] = 0; /* count 占位 */
 
     ctx->list_depth++;
+    ELOG_DBG_EVENT("list_begin: depth=%u (pos=%u)", ctx->list_depth, ctx->pos);
     return ELOG_OK;
 }
 
@@ -162,6 +169,7 @@ int elog_event_list_end(elog_event_ctx_t* ctx) {
     if (!ctx || ctx->list_depth == 0) return ELOG_ERR_PARAM;
 
     ctx->list_depth--;
+    ELOG_DBG_EVENT("list_end: depth=%u count=%u", ctx->list_depth, ctx->count_stack[ctx->list_depth]);
 
     /* 回填 count */
     ctx->storage[ctx->pos_stack[ctx->list_depth]] =
@@ -182,6 +190,9 @@ const uint8_t* elog_event_data(const elog_event_ctx_t* ctx, size_t* len) {
     elog_event_ctx_t* m = (elog_event_ctx_t*)ctx;
     for (unsigned d = ctx->list_depth; d > 0; d--) {
         m->storage[m->pos_stack[d - 1]] = (uint8_t)m->count_stack[d - 1];
+    }
+    if (ctx->list_depth > 0) {
+        ELOG_DBG_EVENT("auto-close %u unclosed lists", ctx->list_depth);
     }
     /* 回填顶层 count */
     m->storage[sizeof(uint32_t) + 1] = (uint8_t)ctx->count;
@@ -215,6 +226,8 @@ int elog_event_submit(elog_event_ctx_t* ctx, const char* tag) {
         elog_event_destroy(ctx);
         return ELOG_ERR_OVERFLOW;
     }
+
+    ELOG_DBG_EVENT("submit: id=%u tag=%s len=%zu", ctx->event_id, tag, data_len);
 
     elog_msg_header_t hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -254,6 +267,7 @@ int elog_event_parser_next(elog_event_parser_t* parser, elog_event_value_t* out)
         memcpy(&out->int32_val, parser->data + parser->pos, sizeof(int32_t));
         parser->pos += sizeof(int32_t);
         out->type = ELOG_EVENT_TYPE_INT32;
+        ELOG_DBG_EVENT("parse int32=%d", out->int32_val);
         return ELOG_OK;
 
     case ELOG_EVENT_TYPE_INT64:
@@ -261,6 +275,7 @@ int elog_event_parser_next(elog_event_parser_t* parser, elog_event_value_t* out)
         memcpy(&out->int64_val, parser->data + parser->pos, sizeof(int64_t));
         parser->pos += sizeof(int64_t);
         out->type = ELOG_EVENT_TYPE_INT64;
+        ELOG_DBG_EVENT("parse int64=%lld", (long long)out->int64_val);
         return ELOG_OK;
 
     case ELOG_EVENT_TYPE_FLOAT:
@@ -268,6 +283,7 @@ int elog_event_parser_next(elog_event_parser_t* parser, elog_event_value_t* out)
         memcpy(&out->float_val, parser->data + parser->pos, sizeof(float));
         parser->pos += sizeof(float);
         out->type = ELOG_EVENT_TYPE_FLOAT;
+        ELOG_DBG_EVENT("parse float=%.4g", (double)out->float_val);
         return ELOG_OK;
 
     case ELOG_EVENT_TYPE_STRING: {
@@ -280,6 +296,7 @@ int elog_event_parser_next(elog_event_parser_t* parser, elog_event_value_t* out)
         out->str_len = slen;
         parser->pos += slen;
         out->type = ELOG_EVENT_TYPE_STRING;
+        ELOG_DBG_EVENT("parse string=\"%.*s\" len=%u", (int)ELOG_MIN(out->str_len,20), out->str_val, out->str_len);
         return ELOG_OK;
     }
 
@@ -287,6 +304,7 @@ int elog_event_parser_next(elog_event_parser_t* parser, elog_event_value_t* out)
         if (parser->pos + 1 > parser->data_len) return ELOG_ERR_PARAM;
         out->list_count = parser->data[parser->pos++];
         out->type = ELOG_EVENT_TYPE_LIST;
+        ELOG_DBG_EVENT("parse list count=%u", out->list_count);
         return ELOG_OK;
 
     default:

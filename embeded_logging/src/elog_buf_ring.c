@@ -15,6 +15,7 @@
 #include "elog_buf.h"
 #include "elog_stats.h"
 #include "elog_prune.h"
+#include "elog_debug.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -94,6 +95,9 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
     uint32_t entry_len = sizeof(hdr) + tag_len + msg_len;
     size_t total = entry_total_size(entry_len);
 
+    ELOG_DBG_RING("write: id=%u tag_len=%u msg_len=%u total=%zu wp=%zu rp=%zu cnt=%u",
+                log_id, tag_len, msg_len, total, rb->write_pos, rb->read_pos, rb->count);
+
     /* ---- ISR 临界区开始 ---- */
     /* 保护: overwrite 循环 + buffer 写入 + pos/count 更新
      * bare-metal: 关中断; Linux: no-op (单线程无竞态) */
@@ -112,38 +116,50 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
         size_t free_space = rb->buf_capacity - rb->write_pos + rb->read_pos;
         if (free_space < total) {
             if (!force && !rb->overwrite) {
+                ELOG_DBG_RING("FULL: free=%zu need=%zu", free_space, total);
                 return ELOG_ERR_FULL;
             }
             if (!force && rb->prune && tag &&
                 elog_prune_is_low_priority(rb->prune, tag) &&
                 elog_prune_should_prune(rb->prune, (uint32_t)used_space,
                                         (uint32_t)rb->buf_capacity)) {
+                ELOG_DBG_RING("PRUNED: tag=%.*s usage=%zu cap=%zu",
+                            (int)tag_len, tag, used_space, rb->buf_capacity);
                 return ELOG_ERR_PRUNED;
             }
             /* 覆写: 推进 read_pos 直到有足够空间 */
+            size_t dropped = 0;
             while ((rb->buf_capacity - rb->write_pos + rb->read_pos) < total && rb->count > 0) {
                 uint32_t old_len = ring_read_u32(rb->buffer, rb->buf_capacity, rb->read_pos);
                 rb->read_pos = (rb->read_pos + entry_total_size(old_len)) % rb->buf_capacity;
                 rb->count--;
+                dropped++;
             }
+            ELOG_DBG_RING("OVERWRITE: dropped=%zu new_rp=%zu", dropped, rb->read_pos);
         }
     } else {
         size_t free_space = rb->read_pos - rb->write_pos;
         if (free_space < total) {
             if (!force && !rb->overwrite) {
+                ELOG_DBG_RING("FULL(wrap): free=%zu need=%zu", free_space, total);
                 return ELOG_ERR_FULL;
             }
             if (!force && rb->prune && tag &&
                 elog_prune_is_low_priority(rb->prune, tag) &&
                 elog_prune_should_prune(rb->prune, (uint32_t)used_space,
                                         (uint32_t)rb->buf_capacity)) {
+                ELOG_DBG_RING("PRUNED(wrap): tag=%.*s usage=%zu cap=%zu",
+                            (int)tag_len, tag, used_space, rb->buf_capacity);
                 return ELOG_ERR_PRUNED;
             }
+            size_t dropped = 0;
             while ((rb->read_pos - rb->write_pos) < total && rb->count > 0) {
                 uint32_t old_len = ring_read_u32(rb->buffer, rb->buf_capacity, rb->read_pos);
                 rb->read_pos = (rb->read_pos + entry_total_size(old_len)) % rb->buf_capacity;
                 rb->count--;
+                dropped++;
             }
+            ELOG_DBG_RING("OVERWRITE(wrap): dropped=%zu new_rp=%zu", dropped, rb->read_pos);
         }
     }
 
@@ -164,6 +180,8 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
 
     rb->write_pos = (rb->write_pos + total) % rb->buf_capacity;
     rb->count++;
+
+    ELOG_DBG_RING("written: wp=%zu cnt=%u", rb->write_pos, rb->count);
 
     elog_port_isr_restore(isr_state);
     /* ---- ISR 临界区结束 ---- */
@@ -229,6 +247,8 @@ static int flush_range_unlocked(elog_ring_buf_t* rb, size_t from, size_t end,
     int flushed = 0;
     size_t pos = from;
 
+    ELOG_DBG_RING("flush_range: from=%zu end=%zu", from, end);
+
     while (pos != end && flushed < 4096) {
         uint32_t entry_len = ring_read_u32(rb->buffer, rb->buf_capacity, pos);
 
@@ -253,11 +273,16 @@ static int flush_range_unlocked(elog_ring_buf_t* rb, size_t from, size_t end,
         }
 
         int ret = callback(&hdr, tag_buf, msg_buf, user);
-        if (ret < 0) break;
+        if (ret < 0) {
+            ELOG_DBG_RING("flush callback error at pos=%zu, stopping", pos);
+            break;
+        }
 
         pos = (pos + entry_total_size(entry_len)) % rb->buf_capacity;
         flushed++;
     }
+
+    ELOG_DBG_RING("flush done: flushed=%d end_pos=%zu", flushed, pos);
 
     if (out_pos) *out_pos = pos;
     return flushed;
@@ -273,6 +298,7 @@ int elog_ring_buf_flush(elog_buf_t* self,
     elog_mutex_lock(&rb->lock);
     size_t new_pos;
     int flushed = flush_range_unlocked(rb, rb->read_pos, rb->write_pos, callback, user, &new_pos);
+    ELOG_DBG_RING("flush: flushed=%d rp=%zu->%zu", flushed, rb->read_pos, new_pos);
     rb->read_pos = new_pos;
     elog_mutex_unlock(&rb->lock);
     return flushed;

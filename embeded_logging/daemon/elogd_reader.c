@@ -12,6 +12,7 @@
 #include "elogd.h"
 #include "elog_buf.h"
 #include "elog_def.h"
+#include "elog_debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,10 +160,14 @@ static void* client_push_thread(void* arg) {
             elog_mutex_unlock(&rb->lock);
         }
 
-        if (!client->active) break;
+        if (!client->active) {
+            ELOG_DBG_READER("client disconnect: fd=%d sent=%d", client->client_fd, sent_count);
+            break;
+        }
 
         /* 所有 buffer 都空, 短暂休眠 */
         if (sent_count == 0) {
+            ELOG_DBG_READER("client[%d]: idle, sleep 50ms", client->client_fd);
             usleep(50000);  /* 50ms */
         }
     }
@@ -272,6 +277,8 @@ void* elogd_reader_thread(void* arg) {
 
         s_clients[s_client_count++] = client;
         elog_mutex_unlock(&s_clients_lock);
+
+        ELOG_DBG_READER("client connect: fd=%d tail=%u mask=0x%x", client_fd, req.tail, req.log_mask);
 
         pthread_t tid;
         pthread_create(&tid, NULL, client_push_thread, client);

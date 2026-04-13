@@ -6,6 +6,7 @@
 #include "elogd.h"
 #include "elog_def.h"
 #include "elog_port.h"
+#include "elog_debug.h"
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -43,6 +44,8 @@ int elogd_client_init(void) {
 
     /* 连接可能失败 (daemon 未启动), 但 SOCK_DGRAM 连接失败不影响后续 sendto */
     connect(g_elogd_fd, (struct sockaddr*)&addr, sizeof(addr));
+
+    ELOG_DBG_CLIENT("init: fd=%d", g_elogd_fd);
 
     elog_mutex_unlock(&g_elogd_lock);
     return ELOG_OK;
@@ -87,7 +90,10 @@ int elogd_client_send(const elog_msg_header_t* hdr, const char* tag, const char*
     ssize_t sent = sendto(g_elogd_fd, buf, total, 0,
                           (struct sockaddr*)&addr, sizeof(addr));
 
+    ELOG_DBG_CLIENT("send: tag_len=%u msg_len=%u total=%zu", tag_len, msg_len, total);
+
     if (sent < 0) {
+        ELOG_DBG_CLIENT("send failed: errno=%d", errno);
         /* 发送失败 — daemon 可能已退出, 关闭 fd 下次重连 */
         close(g_elogd_fd);
         g_elogd_fd = -1;
@@ -132,6 +138,9 @@ int elogd_client_send_binary(const elog_msg_header_t* hdr, const char* tag,
 
     ssize_t sent = sendto(g_elogd_fd, buf, total, 0,
                           (struct sockaddr*)&addr, sizeof(addr));
+
+    ELOG_DBG_CLIENT("send_binary: tag_len=%u msg_len=%u total=%zu", tag_len, msg_len, total);
+
     if (sent < 0) {
         close(g_elogd_fd);
         g_elogd_fd = -1;

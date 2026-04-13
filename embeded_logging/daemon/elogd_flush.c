@@ -9,6 +9,7 @@
 #include "elog_format.h"
 #include "elog_event.h"
 #include "elog_def.h"
+#include "elog_debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -180,16 +181,21 @@ void* elogd_flusher_thread(void* arg) {
                 flush_ctx_t ctx = { .transport = &transports[bid], .count = 0 };
                 size_t end = rb->write_pos;
 
+                ELOG_DBG_FLUSHER("flush[%d]: rp=%zu wp=%zu", bid, buf_states[bid].read_pos, rb->write_pos);
+
                 int (*cb)(const elog_msg_header_t*, const char*, const char*, void*) =
                     (bid == ELOG_ID_EVENTS) ? flush_event_to_file_cb : flush_to_file_cb;
 
                 elog_ring_buf_flush_range(rb, buf_states[bid].read_pos, end,
                                            cb, &ctx);
 
-                buf_states[bid].read_pos = advance_read_pos(
+                size_t new_rp = advance_read_pos(
                     rb->buffer, rb->buf_capacity,
                     buf_states[bid].read_pos, end);
 
+                ELOG_DBG_FLUSHER("flushed[%d]: count=%d new_rp=%zu", bid, ctx.count, new_rp);
+
+                buf_states[bid].read_pos = new_rp;
                 transports[bid].base.flush(&transports[bid].base);
             }
 

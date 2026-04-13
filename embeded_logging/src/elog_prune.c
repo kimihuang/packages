@@ -10,6 +10,7 @@
  */
 
 #include "elog_prune.h"
+#include "elog_debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -126,6 +127,7 @@ bool elog_prune_is_low_priority(const elog_prune_t* p, const char* tag) {
     if (!p || !tag) return false;
     for (uint8_t i = 0; i < p->low_count; i++) {
         if (strcmp(p->low_rules[i].tag, tag) == 0) {
+            ELOG_DBG_PRUNE("low_priority: tag=\"%s\"", tag);
             return true;
         }
     }
@@ -136,5 +138,7 @@ bool elog_prune_should_prune(const elog_prune_t* p, uint32_t buffer_size,
                               uint32_t buffer_capacity) {
     if (!p || buffer_capacity == 0) return false;
     uint32_t usage_pct = (uint32_t)((uint64_t)buffer_size * 100 / buffer_capacity);
+    ELOG_DBG_PRUNE("should_prune: usage=%u%% threshold=%u%%",
+                usage_pct, p->threshold_pct);
     return usage_pct >= p->threshold_pct;
 }
