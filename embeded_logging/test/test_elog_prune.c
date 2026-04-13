@@ -9,6 +9,20 @@
 #include <string.h>
 #include <assert.h>
 
+/* ===== 集成测试辅助 ===== */
+
+static int write_rb(elog_ring_buf_t* rb, const char* tag, const char* msg) {
+    return rb->base.log(&rb->base, ELOG_ID_MAIN, ELOG_LEVEL_INFO, 1, 1, 10, tag, msg);
+}
+
+static int count_flush_cb(const elog_msg_header_t* hdr,
+                           const char* tag, const char* msg, void* user) {
+    (void)hdr; (void)tag; (void)msg; (void)user;
+    return 0;
+}
+
+/* ===== 单元测试 ===== */
+
 static void test_prune_init(void) {
     printf("  test_prune_init...\n");
 
@@ -135,11 +149,215 @@ static void test_prune_null(void) {
     assert(ret == 0);
 }
 
-/* ===== 集成测试: Prune + RingBuffer ===== */
+static void test_prune_max_rules_overflow(void) {
+    printf("  test_prune_max_rules_overflow...\n");
 
-static int write_rb(elog_ring_buf_t* rb, const char* tag, const char* msg) {
-    return rb->base.log(&rb->base, ELOG_ID_MAIN, ELOG_LEVEL_INFO, 1, 1, 10, tag, msg);
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+
+    /* 构造超过 ELOG_MAX_PRUNE_RULES 条规则 */
+    char rules[512];
+    int pos = 0;
+    for (int i = 0; i < ELOG_MAX_PRUNE_RULES + 5; i++) {
+        pos += snprintf(rules + pos, sizeof(rules) - (size_t)pos,
+                        "%s~prot%d", i > 0 ? " " : "", i);
+    }
+    int ret = elog_prune_load_rules(&p, rules);
+    assert(ret == ELOG_OK);
+
+    /* 只保留前 ELOG_MAX_PRUNE_RULES 条 */
+    assert(p.high_count == ELOG_MAX_PRUNE_RULES);
+    assert(elog_prune_is_protected(&p, "prot0") == true);
+    assert(elog_prune_is_protected(&p, "prot15") == true);
+    assert(elog_prune_is_protected(&p, "prot16") == false);
+
+    /* 低优先级同理 */
+    elog_prune_load_rules(&p, "low0 low1 low2 low3 low4 low5 low6 low7 "
+                          "low8 low9 low10 low11 low12 low13 low14 low15 low16 low17");
+    assert(p.low_count == ELOG_MAX_PRUNE_RULES);
+    assert(elog_prune_is_low_priority(&p, "low0") == true);
+    assert(elog_prune_is_low_priority(&p, "low15") == true);
+    assert(elog_prune_is_low_priority(&p, "low16") == false);
 }
+
+static void test_prune_empty_and_whitespace_rules(void) {
+    printf("  test_prune_empty_and_whitespace_rules...\n");
+
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+
+    /* 空字符串 */
+    int ret = elog_prune_load_rules(&p, "");
+    assert(ret == ELOG_OK);
+    assert(p.high_count == 0);
+    assert(p.low_count == 0);
+
+    /* 纯空白 */
+    ret = elog_prune_load_rules(&p, "   \t\n  ");
+    assert(ret == ELOG_OK);
+    assert(p.high_count == 0);
+    assert(p.low_count == 0);
+
+    /* 多个分隔符 */
+    ret = elog_prune_load_rules(&p, ",,, ~a ;; ;; ~b");
+    assert(ret == ELOG_OK);
+    assert(p.high_count == 2);
+    assert(elog_prune_is_protected(&p, "a") == true);
+    assert(elog_prune_is_protected(&p, "b") == true);
+}
+
+static void test_prune_serialize_truncation(void) {
+    printf("  test_prune_serialize_truncation...\n");
+
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+    elog_prune_load_rules(&p, "~aaaa ~bbbb ~cccc");
+
+    /* 缓冲区很小 — 应截断而非越界 */
+    char buf[8];
+    int n = elog_prune_serialize_rules(&p, buf, sizeof(buf));
+    assert(n > 0);
+    assert(n < (int)sizeof(buf) || buf[sizeof(buf) - 1] == '\0');
+
+    /* 正常大小 */
+    char buf2[256];
+    n = elog_prune_serialize_rules(&p, buf2, sizeof(buf2));
+    assert(n > 0);
+    assert(strstr(buf2, "~aaaa") != NULL);
+    assert(strstr(buf2, "~bbbb") != NULL);
+    assert(strstr(buf2, "~cccc") != NULL);
+}
+
+static void test_prune_null_tag_in_write(void) {
+    printf("  test_prune_null_tag_in_write...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+    elog_prune_load_rules(&p, "noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* tag=NULL 应正常写入 (prune 检查跳过 NULL tag) */
+    int ret = write_rb(&rb, NULL, "no tag msg");
+    assert(ret == ELOG_OK);
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static void test_prune_force_bypasses_prune(void) {
+    printf("  test_prune_force_bypasses_prune...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+    elog_prune_load_rules(&p, "~important noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Fill buffer */
+    for (int i = 0; i < 8; i++) {
+        write_rb(&rb, "important", "fill");
+    }
+
+    /* ISR path (force=true) should bypass prune check */
+    int ret = elog_ring_buf_log_isr(&rb, ELOG_ID_MAIN, ELOG_LEVEL_INFO,
+                                      1, 1, 10, "noisy", "force write");
+    assert(ret == ELOG_OK);  /* force 写入不受 prune 限制 */
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static void test_prune_overwrite_content_correctness(void) {
+    printf("  test_prune_overwrite_content_correctness...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+    elog_prune_load_rules(&p, "~important noisy");
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Fill with important */
+    for (int i = 0; i < 8; i++) {
+        write_rb(&rb, "important", "keep this");
+    }
+
+    /* Write more important entries — should overwrite old ones */
+    for (int i = 0; i < 3; i++) {
+        int ret = write_rb(&rb, "important", "new data");
+        assert(ret == ELOG_OK);
+    }
+
+    /* Flush and verify all entries have correct tag */
+    int important_count = 0;
+    elog_ring_buf_flush(&rb.base, count_flush_cb, NULL);
+
+    /* Re-read entries to verify tags */
+    elog_ring_buf_clear(&rb.base);
+    write_rb(&rb, "important", "final");
+    write_rb(&rb, "important", "check");
+    assert(rb.count == 2);
+
+    int flushed = elog_ring_buf_flush(&rb.base, count_flush_cb, NULL);
+    assert(flushed == 2);
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static void test_prune_no_rules_set(void) {
+    printf("  test_prune_no_rules_set...\n");
+
+    elog_ring_buf_t rb;
+    elog_prune_t p;
+    elog_prune_init(&p, 50);
+    /* No rules loaded */
+
+    elog_ring_buf_init(&rb, 256);
+    elog_ring_buf_set_prune(&rb, &p);
+
+    /* Fill buffer */
+    for (int i = 0; i < 8; i++) {
+        write_rb(&rb, "anytag", "msg");
+    }
+
+    /* "anytag" is not in low_priority list, so it should NOT be pruned */
+    int ret = write_rb(&rb, "anytag", "still goes in");
+    assert(ret == ELOG_OK);
+
+    elog_ring_buf_destroy(&rb);
+}
+
+static void test_prune_should_prune_edge_cases(void) {
+    printf("  test_prune_should_prune_edge_cases...\n");
+
+    elog_prune_t p;
+    elog_prune_init(&p, 1);  /* 1% threshold - very sensitive */
+
+    /* 空缓冲区 */
+    assert(elog_prune_should_prune(&p, 0, 1000) == false);
+
+    /* 1/1000 = 0.1% < 1% */
+    assert(elog_prune_should_prune(&p, 1, 1000) == false);
+
+    /* 10/1000 = 1% >= 1% */
+    assert(elog_prune_should_prune(&p, 10, 1000) == true);
+
+    /* 0% threshold */
+    p.threshold_pct = 0;
+    assert(elog_prune_should_prune(&p, 0, 1000) == true);
+    assert(elog_prune_should_prune(&p, 1, 1000) == true);
+
+    /* 100% threshold */
+    p.threshold_pct = 100;
+    assert(elog_prune_should_prune(&p, 999, 1000) == false);
+    assert(elog_prune_should_prune(&p, 1000, 1000) == true);
+}
+
+/* ===== 集成测试: Prune + RingBuffer ===== */
 
 static void test_prune_drop_low_priority(void) {
     printf("  test_prune_drop_low_priority...\n");
@@ -166,12 +384,6 @@ static void test_prune_drop_low_priority(void) {
     assert(ret == ELOG_OK);
 
     elog_ring_buf_destroy(&rb);
-}
-
-static int count_flush_cb(const elog_msg_header_t* hdr,
-                           const char* tag, const char* msg, void* user) {
-    (void)hdr; (void)tag; (void)msg; (void)user;
-    return 0;
 }
 
 static void test_prune_protected_survives(void) {
@@ -234,6 +446,14 @@ int test_elog_prune(void) {
     test_prune_get_rules();
     test_prune_should_prune();
     test_prune_null();
+    test_prune_max_rules_overflow();
+    test_prune_empty_and_whitespace_rules();
+    test_prune_serialize_truncation();
+    test_prune_null_tag_in_write();
+    test_prune_force_bypasses_prune();
+    test_prune_overwrite_content_correctness();
+    test_prune_no_rules_set();
+    test_prune_should_prune_edge_cases();
     test_prune_drop_low_priority();
     test_prune_protected_survives();
     test_prune_below_threshold();
