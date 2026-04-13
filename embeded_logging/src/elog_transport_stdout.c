@@ -12,7 +12,7 @@
 void elog_transport_registry_init(elog_transport_registry_t* r) {
     if (!r) return;
     memset(r, 0, sizeof(*r));
-    pthread_mutex_init(&r->lock, NULL);
+    elog_mutex_init(&r->lock);
     r->initialized = true;
 }
 
@@ -20,16 +20,16 @@ int elog_transport_register(elog_transport_registry_t* r, elog_transport_t* t) {
     if (!r || !t) return ELOG_ERR_PARAM;
     if (r->count >= ELOG_MAX_TRANSPORTS) return ELOG_ERR_FULL;
 
-    pthread_mutex_lock(&r->lock);
+    elog_mutex_lock(&r->lock);
     r->transports[r->count++] = t;
-    pthread_mutex_unlock(&r->lock);
+    elog_mutex_unlock(&r->lock);
     return ELOG_OK;
 }
 
 int elog_transport_unregister(elog_transport_registry_t* r, elog_transport_t* t) {
     if (!r || !t) return ELOG_ERR_PARAM;
 
-    pthread_mutex_lock(&r->lock);
+    elog_mutex_lock(&r->lock);
     for (uint8_t i = 0; i < r->count; i++) {
         if (r->transports[i] == t) {
             /* 移动后续元素 */
@@ -37,43 +37,43 @@ int elog_transport_unregister(elog_transport_registry_t* r, elog_transport_t* t)
                 r->transports[j] = r->transports[j + 1];
             }
             r->count--;
-            pthread_mutex_unlock(&r->lock);
+            elog_mutex_unlock(&r->lock);
             return ELOG_OK;
         }
     }
-    pthread_mutex_unlock(&r->lock);
+    elog_mutex_unlock(&r->lock);
     return ELOG_ERR_PARAM;
 }
 
 void elog_transport_dispatch(elog_transport_registry_t* r, const uint8_t* data, size_t len) {
     if (!r || !data || len == 0) return;
 
-    pthread_mutex_lock(&r->lock);
+    elog_mutex_lock(&r->lock);
     for (uint8_t i = 0; i < r->count; i++) {
         elog_transport_t* t = r->transports[i];
         if (t && t->write && t->is_open && t->is_open(t)) {
             t->write(t, data, len);
         }
     }
-    pthread_mutex_unlock(&r->lock);
+    elog_mutex_unlock(&r->lock);
 }
 
 void elog_transport_flush_all(elog_transport_registry_t* r) {
     if (!r) return;
 
-    pthread_mutex_lock(&r->lock);
+    elog_mutex_lock(&r->lock);
     for (uint8_t i = 0; i < r->count; i++) {
         elog_transport_t* t = r->transports[i];
         if (t && t->flush && t->is_open && t->is_open(t)) {
             t->flush(t);
         }
     }
-    pthread_mutex_unlock(&r->lock);
+    elog_mutex_unlock(&r->lock);
 }
 
 void elog_transport_registry_destroy(elog_transport_registry_t* r) {
     if (!r) return;
-    pthread_mutex_destroy(&r->lock);
+    elog_mutex_destroy(&r->lock);
     r->count = 0;
     r->initialized = false;
 }

@@ -12,6 +12,7 @@
 #include "elog_stats.h"
 #include "elog_buf.h"
 #include "elog_transport.h"
+#include "elog_port.h"
 #if ELOG_PRUNE_ENABLE
 #include "elog_prune.h"
 #endif
@@ -20,9 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <signal.h>
-#include <stdatomic.h>
-#include <pthread.h>
 #include <unistd.h>
 
 /* ===== 全局状态 ===== */
@@ -49,7 +47,7 @@ static struct {
     elog_logger_func_t logger_func;
 
     /* ISR count */
-    _Atomic uint32_t isr_pending_count;
+    volatile uint32_t isr_pending_count;
 } g_elog;
 
 /* ===== 内部辅助函数 ===== */
@@ -280,7 +278,7 @@ int elog_write_isr(elog_level_t level, const char* tag,
                                      ELOG_ID_MAIN, level,
                                      0, 0, 0, tag, msg);
     if (ret == ELOG_OK) {
-        atomic_fetch_add(&g_elog.isr_pending_count, 1);
+        elog_port_atomic_inc(&g_elog.isr_pending_count);
     }
     return ret;
 }

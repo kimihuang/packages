@@ -10,7 +10,7 @@
 #define ELOG_TRANSPORT_H
 
 #include "elog_def.h"
-#include <pthread.h>
+#include "elog_port.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,7 +30,7 @@ typedef struct elog_transport {
 typedef struct {
     elog_transport_t* transports[ELOG_MAX_TRANSPORTS];
     uint8_t           count;
-    pthread_mutex_t   lock;
+    elog_mutex_t     lock;
     bool              initialized;
 } elog_transport_registry_t;
 

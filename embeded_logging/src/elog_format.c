@@ -5,20 +5,18 @@
 
 #include "elog_format.h"
 #include "elog_filter.h"
+#include "elog_port.h"
 #include <stdio.h>
-#include <time.h>
 #include <string.h>
 
 int elog_format_timestamp(uint32_t ts, char* buf, size_t buf_len) {
     if (!buf || buf_len < 18) return 0;
 
-    time_t t = (time_t)ts;
-    struct tm tm_buf;
-    localtime_r(&t, &tm_buf);
+    int hour, minute, second, day, month;
+    elog_port_localtime(ts, &hour, &minute, &second, &day, &month);
 
     int n = snprintf(buf, buf_len, "%02d-%02d %02d:%02d:%02d",
-                     tm_buf.tm_mon + 1, tm_buf.tm_mday,
-                     tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec);
+                     month, day, hour, minute, second);
     return (n > 0 && (size_t)n < buf_len) ? n : 0;
 }
 

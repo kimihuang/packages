@@ -15,6 +15,7 @@ extern int test_elog_prune(void);
 extern int test_elog_event(void);
 extern int test_elog_transport(void);
 extern int test_elog_transport_file(void);
+extern int test_elog_port(void);
 
 typedef int (*test_func_t)(void);
 
@@ -30,6 +31,7 @@ static const struct {
     { "elog_event",         test_elog_event },
     { "elog_transport",     test_elog_transport },
     { "elog_transport_file", test_elog_transport_file },
+    { "elog_port",            test_elog_port },
 };
 
 int main(void) {

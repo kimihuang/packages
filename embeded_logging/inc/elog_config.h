@@ -113,4 +113,9 @@ extern "C" {
 }
 #endif
 
+/* ===== 平台选择 ===== */
+#ifndef ELOG_PORT_LINUX
+#define ELOG_PORT_LINUX            1        /* 1: Linux, 0: Bare-metal */
+#endif
+
 #endif /* ELOG_CONFIG_H */

@@ -17,9 +17,6 @@
 #include "elog_prune.h"
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
-#include <sys/syscall.h>
 
 /* 条目前缀长度 */
 #define ENTRY_PREFIX_LEN  sizeof(uint32_t)
@@ -65,9 +62,7 @@ static void ring_write(uint8_t* buf, size_t cap, size_t pos,
     }
 }
 
-static inline pid_t gettid(void) {
-    return (pid_t)syscall(SYS_gettid);
-}
+/* gettid 已由 elog_port_gettid() 替代，此处不再需要本地定义 */
 
 /* ---- 内部函数 ---- */
 
@@ -82,9 +77,9 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
     memset(&hdr, 0, sizeof(hdr));
     hdr.log_id = (uint8_t)log_id;
     hdr.level = (uint8_t)level;
-    hdr.timestamp = (uint32_t)time(NULL);
-    hdr.pid = (uint16_t)getpid();
-    hdr.tid = (uint16_t)gettid();
+    hdr.timestamp = (uint32_t)elog_port_now();
+    hdr.pid = elog_port_getpid();
+    hdr.tid = elog_port_gettid();
     hdr.line = line;
     hdr.tag_len = tag_len;
     hdr.msg_len = msg_len;
@@ -152,12 +147,12 @@ int elog_ring_buf_log(elog_buf_t* self, elog_id_t log_id, elog_level_t level,
     elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
     if (!rb || !rb->buffer) return ELOG_ERR_NOT_INIT;
 
-    pthread_mutex_lock(&rb->lock);
+    elog_mutex_lock(&rb->lock);
     int ret = ring_write_unlocked(rb, log_id, level, line, tag, msg, false);
     if (ret == ELOG_OK) {
-        pthread_cond_signal(&rb->not_empty);
+        elog_cond_signal(&rb->not_empty);
     }
-    pthread_mutex_unlock(&rb->lock);
+    elog_mutex_unlock(&rb->lock);
     return ret;
 }
 
@@ -168,7 +163,7 @@ int elog_ring_buf_flush(elog_buf_t* self,
     elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
     if (!rb || !rb->buffer || !callback) return ELOG_ERR_PARAM;
 
-    pthread_mutex_lock(&rb->lock);
+    elog_mutex_lock(&rb->lock);
 
     int flushed = 0;
     size_t pos = rb->read_pos;
@@ -209,25 +204,25 @@ int elog_ring_buf_flush(elog_buf_t* self,
     }
 
     rb->read_pos = pos;
-    pthread_mutex_unlock(&rb->lock);
+    elog_mutex_unlock(&rb->lock);
     return flushed;
 }
 
 void elog_ring_buf_clear(elog_buf_t* self) {
     elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
     if (!rb) return;
-    pthread_mutex_lock(&rb->lock);
+    elog_mutex_lock(&rb->lock);
     rb->write_pos = 0;
     rb->read_pos = 0;
     rb->count = 0;
     memset(rb->buffer, 0, rb->buf_capacity);
-    pthread_mutex_unlock(&rb->lock);
+    elog_mutex_unlock(&rb->lock);
 }
 
 size_t elog_ring_buf_size(elog_buf_t* self) {
     elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
     if (!rb) return 0;
-    pthread_mutex_lock(&rb->lock);
+    elog_mutex_lock(&rb->lock);
     /* 计算已用空间 */
     size_t used;
     if (rb->write_pos >= rb->read_pos) {
@@ -235,7 +230,7 @@ size_t elog_ring_buf_size(elog_buf_t* self) {
     } else {
         used = rb->buf_capacity - rb->read_pos + rb->write_pos;
     }
-    pthread_mutex_unlock(&rb->lock);
+    elog_mutex_unlock(&rb->lock);
     return used;
 }
 
@@ -247,9 +242,9 @@ size_t elog_ring_buf_capacity(elog_buf_t* self) {
 bool elog_ring_buf_is_empty(elog_buf_t* self) {
     elog_ring_buf_t* rb = (elog_ring_buf_t*)self;
     if (!rb) return true;
-    pthread_mutex_lock(&rb->lock);
+    elog_mutex_lock(&rb->lock);
     bool empty = (rb->count == 0);
-    pthread_mutex_unlock(&rb->lock);
+    elog_mutex_unlock(&rb->lock);
     return empty;
 }
 
@@ -264,8 +259,8 @@ int elog_ring_buf_init(elog_ring_buf_t* rb, size_t capacity) {
 
     rb->buf_capacity = capacity;
     rb->overwrite = true;
-    pthread_mutex_init(&rb->lock, NULL);
-    pthread_cond_init(&rb->not_empty, NULL);
+    elog_mutex_init(&rb->lock);
+    elog_cond_init(&rb->not_empty);
 
     /* 设置 vtable */
     rb->base.log      = elog_ring_buf_log;
@@ -285,8 +280,8 @@ int elog_ring_buf_init_static(elog_ring_buf_t* rb, uint8_t* buf, size_t capacity
     rb->buffer = buf;
     rb->buf_capacity = capacity;
     rb->overwrite = true;
-    pthread_mutex_init(&rb->lock, NULL);
-    pthread_cond_init(&rb->not_empty, NULL);
+    elog_mutex_init(&rb->lock);
+    elog_cond_init(&rb->not_empty);
 
     rb->base.log      = elog_ring_buf_log;
     rb->base.flush    = elog_ring_buf_flush;
@@ -303,8 +298,8 @@ void elog_ring_buf_destroy(elog_ring_buf_t* rb) {
     /* 注意: 如果使用 init_static，不应 free buffer */
     /* 这里简单处理: 只 free 动态分配的 buffer */
     /* 通过写入 magic 标记区分 (简化: 始终 free) */
-    pthread_mutex_destroy(&rb->lock);
-    pthread_cond_destroy(&rb->not_empty);
+    elog_mutex_destroy(&rb->lock);
+    elog_cond_destroy(&rb->not_empty);
     free(rb->buffer);
     rb->buffer = NULL;
     rb->buf_capacity = 0;

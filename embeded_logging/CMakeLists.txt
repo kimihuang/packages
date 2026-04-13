@@ -21,6 +21,7 @@ set(ELOG_SOURCES
     src/elog_buf_ring.c
     src/elog_transport_stdout.c
     src/elog_transport_file.c
+    src/elog_port_linux.c
 )
 
 add_library(elog STATIC ${ELOG_SOURCES})
@@ -39,6 +40,7 @@ set(TEST_SOURCES
     test/test_elog_event.c
     test/test_elog_transport.c
     test/test_elog_transport_file.c
+    test/test_elog_port.c
 )
 
 add_executable(elog_test ${TEST_SOURCES})

@@ -14,7 +14,7 @@
 
 #include "elog_def.h"
 #include "elog_filter.h"
-#include <pthread.h>
+#include "elog_port.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,8 +48,8 @@ typedef struct {
     bool      overwrite;                /* true: 覆写旧日志 */
 
     /* Linux pthread 同步 */
-    pthread_mutex_t lock;
-    pthread_cond_t  not_empty;
+    elog_mutex_t lock;
+    elog_cond_t  not_empty;
 } elog_ring_buf_t;
 
 /**
