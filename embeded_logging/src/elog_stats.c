@@ -22,6 +22,16 @@ void elog_stats_on_log(elog_stats_t* s, uint8_t log_id, uint8_t level) {
     }
 }
 
+void elog_stats_on_log_isr(elog_stats_t* s, uint8_t log_id, uint8_t level) {
+    if (!s) return;
+    if (log_id < ELOG_ID_MAX) {
+        elog_port_atomic_inc(&s->total_count[log_id]);
+    }
+    if (level < 6) {
+        elog_port_atomic_inc(&s->level_count[level]);
+    }
+}
+
 void elog_stats_on_drop(elog_stats_t* s, uint8_t log_id) {
     if (!s) return;
     if (log_id < ELOG_ID_MAX) {

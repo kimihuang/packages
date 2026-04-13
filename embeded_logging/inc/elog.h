@@ -124,6 +124,36 @@ void elog_fatal(const char* tag, const char* fmt, ...)
 int elog_write_isr(elog_level_t level, const char* tag,
                    const char* msg, uint16_t msg_len);
 
+/**
+ * ISR 安全写入便捷宏 (消息为字符串字面量, 不使用 printf)
+ */
+#define elog_isr(level, tag, msg) \
+    elog_write_isr(level, tag, msg, (uint16_t)strlen(msg))
+
+#define ELOG_ISR_V(tag, msg) \
+    do { if (ELOG_LEVEL_VERBOSE >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_VERBOSE, tag, msg); } while(0)
+
+#define ELOG_ISR_D(tag, msg) \
+    do { if (ELOG_LEVEL_DEBUG >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_DEBUG, tag, msg); } while(0)
+
+#define ELOG_ISR_I(tag, msg) \
+    do { if (ELOG_LEVEL_INFO >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_INFO, tag, msg); } while(0)
+
+#define ELOG_ISR_W(tag, msg) \
+    do { if (ELOG_LEVEL_WARN >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_WARN, tag, msg); } while(0)
+
+#define ELOG_ISR_E(tag, msg) \
+    do { if (ELOG_LEVEL_ERROR >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_ERROR, tag, msg); } while(0)
+
+#define ELOG_ISR_F(tag, msg) \
+    do { if (ELOG_LEVEL_FATAL >= ELOG_LEVEL_DEFAULT) \
+        elog_isr(ELOG_LEVEL_FATAL, tag, msg); } while(0)
+
 /* ===== 后端替换 ===== */
 
 /**

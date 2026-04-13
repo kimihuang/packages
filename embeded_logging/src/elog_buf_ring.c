@@ -88,6 +88,11 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
     uint32_t entry_len = sizeof(hdr) + tag_len + msg_len;
     size_t total = entry_total_size(entry_len);
 
+    /* ---- ISR 临界区开始 ---- */
+    /* 保护: overwrite 循环 + buffer 写入 + pos/count 更新
+     * bare-metal: 关中断; Linux: no-op (单线程无竞态) */
+    elog_isr_state_t isr_state = elog_port_isr_save();
+
     /* 检查空间 */
     /* 计算已用空间 (用于 prune 判断) */
     size_t used_space;
@@ -153,6 +158,9 @@ static int ring_write_unlocked(elog_ring_buf_t* rb, elog_id_t log_id, elog_level
 
     rb->write_pos = (rb->write_pos + total) % rb->buf_capacity;
     rb->count++;
+
+    elog_port_isr_restore(isr_state);
+    /* ---- ISR 临界区结束 ---- */
 
     return ELOG_OK;
 }

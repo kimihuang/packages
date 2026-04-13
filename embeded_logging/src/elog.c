@@ -138,6 +138,13 @@ static void elog_write_internal(elog_level_t level, const char* tag,
     if (fmt_len > 0) {
         dispatch_to_transports(fmt_ctx.buf, (size_t)fmt_len);
     }
+
+    /* 6. 消费 ISR pending: ISR 写入后由正常上下文触发 transport flush */
+    if (g_elog.isr_pending_count > 0) {
+        g_elog.isr_pending_count = 0;
+        /* 通过 reader condvar 通知有新日志 */
+        elog_cond_signal(&g_elog.ring_buf.not_empty);
+    }
 }
 
 /* ===== 公共 API ===== */
@@ -312,6 +319,7 @@ int elog_write_isr(elog_level_t level, const char* tag,
                                      0, 0, 0, tag, msg);
     if (ret == ELOG_OK) {
         elog_port_atomic_inc(&g_elog.isr_pending_count);
+        elog_stats_on_log_isr(&g_elog.stats, ELOG_ID_MAIN, (uint8_t)level);
     }
     return ret;
 }

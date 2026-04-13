@@ -10,6 +10,7 @@
 #define ELOG_STATS_H
 
 #include "elog_def.h"
+#include "elog_port.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,11 @@ void elog_stats_init(elog_stats_t* s);
  * 记录一次成功写入
  */
 void elog_stats_on_log(elog_stats_t* s, uint8_t log_id, uint8_t level);
+
+/**
+ * 记录一次成功写入 (ISR-safe, 使用 atomic_inc)
+ */
+void elog_stats_on_log_isr(elog_stats_t* s, uint8_t log_id, uint8_t level);
 
 /**
  * 记录一次丢弃
