@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-/* Socket 路径 (可被 config 覆盖) */
+/* Socket 路径 (编译时常量, 运行时可通过 g_daemon_*_sock 覆盖) */
 #ifndef ELOG_DAEMON_SOCK_PATH
 #define ELOG_DAEMON_SOCK_PATH  "/var/run/elogdw"
 #endif
@@ -25,6 +25,11 @@ extern "C" {
 #ifndef ELOG_DAEMON_READER_SOCK
 #define ELOG_DAEMON_READER_SOCK  "/var/run/elogdr"
 #endif
+
+/* 运行时可覆盖的 socket 路径 (由 elogd.c 定义, 其他模块 extern 引用) */
+extern const char* g_daemon_write_sock;
+extern const char* g_daemon_cmd_sock;
+extern const char* g_daemon_reader_sock;
 
 /* Daemon 缓冲区大小 (独立于 ELOG_BUFFER_SIZE) */
 #ifndef ELOG_DAEMON_BUFFER_SIZE

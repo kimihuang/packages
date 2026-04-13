@@ -10,6 +10,8 @@
  *   reader      — SOCK_SEQPACKET accept, per-client push 线程
  */
 
+#define ELOGD_IS_DAEMON
+
 #include "elogd.h"
 #include "elog_buf.h"
 #include "elog_prune.h"
@@ -21,12 +23,18 @@
 #include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <getopt.h>
 
 /* 共享状态 */
 static elog_ring_buf_t s_daemon_rb;
 static elog_prune_t s_daemon_prune;
 elog_ring_buf_t* g_daemon_rb = &s_daemon_rb;
 volatile bool g_daemon_running = false;
+
+/* 可通过命令行覆盖的 socket 路径 */
+const char* g_daemon_write_sock  = ELOG_DAEMON_SOCK_PATH;
+const char* g_daemon_cmd_sock    = ELOG_DAEMON_CMD_SOCK;
+const char* g_daemon_reader_sock = ELOG_DAEMON_READER_SOCK;
 
 static pthread_t s_listener_tid;
 static pthread_t s_cmd_tid;
@@ -102,7 +110,19 @@ void elogd_stop(void) {
 }
 
 int main(int argc, char* argv[]) {
-    (void)argc;
-    (void)argv;
+    int opt;
+    while ((opt = getopt(argc, argv, "w:c:r:h")) != -1) {
+        switch (opt) {
+        case 'w': g_daemon_write_sock  = optarg; break;
+        case 'c': g_daemon_cmd_sock    = optarg; break;
+        case 'r': g_daemon_reader_sock = optarg; break;
+        case 'h':
+            printf("Usage: elogd [-w write_sock] [-c cmd_sock] [-r reader_sock]\n");
+            return 0;
+        default:
+            fprintf(stderr, "elogd: unknown option -%c\n", opt);
+            return 1;
+        }
+    }
     return elogd_run();
 }

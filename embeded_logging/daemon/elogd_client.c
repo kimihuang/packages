@@ -12,6 +12,13 @@
 #include <unistd.h>
 #include <errno.h>
 
+/* 客户端默认 socket 路径 (daemon 进程会用自己的定义覆盖) */
+#ifndef ELOGD_IS_DAEMON
+const char* g_daemon_write_sock  = ELOG_DAEMON_SOCK_PATH;
+const char* g_daemon_cmd_sock    = ELOG_DAEMON_CMD_SOCK;
+const char* g_daemon_reader_sock = ELOG_DAEMON_READER_SOCK;
+#endif
+
 static int g_elogd_fd = -1;
 static elog_mutex_t g_elogd_lock;
 
@@ -32,7 +39,7 @@ int elogd_client_init(void) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ELOG_DAEMON_SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, g_daemon_write_sock, sizeof(addr.sun_path) - 1);
 
     /* 连接可能失败 (daemon 未启动), 但 SOCK_DGRAM 连接失败不影响后续 sendto */
     connect(g_elogd_fd, (struct sockaddr*)&addr, sizeof(addr));
@@ -75,7 +82,7 @@ int elogd_client_send(const elog_msg_header_t* hdr, const char* tag, const char*
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ELOG_DAEMON_SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, g_daemon_write_sock, sizeof(addr.sun_path) - 1);
 
     ssize_t sent = sendto(g_elogd_fd, buf, total, 0,
                           (struct sockaddr*)&addr, sizeof(addr));

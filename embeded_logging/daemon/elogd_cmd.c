@@ -69,12 +69,12 @@ void* elogd_cmd_thread(void* arg) {
         return NULL;
     }
 
-    unlink(ELOG_DAEMON_CMD_SOCK);
+    unlink(g_daemon_cmd_sock);
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ELOG_DAEMON_CMD_SOCK, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, g_daemon_cmd_sock, sizeof(addr.sun_path) - 1);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("elogd_cmd: bind");
@@ -118,6 +118,5 @@ void* elogd_cmd_thread(void* arg) {
     }
 
     close(fd);
-    unlink(ELOG_DAEMON_CMD_SOCK);
-    return NULL;
+    unlink(g_daemon_cmd_sock);    return NULL;
 }

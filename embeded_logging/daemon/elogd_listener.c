@@ -28,12 +28,12 @@ void* elogd_listener_thread(void* arg) {
     }
 
     /* 确保旧 socket 文件不存在 */
-    unlink(ELOG_DAEMON_SOCK_PATH);
+    unlink(g_daemon_write_sock);
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ELOG_DAEMON_SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, g_daemon_write_sock, sizeof(addr.sun_path) - 1);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("elogd_listener: bind");
@@ -74,15 +74,25 @@ void* elogd_listener_thread(void* arg) {
         elog_msg_header_t hdr;
         memcpy(&hdr, buf, sizeof(hdr));
 
-        /* tag 和 msg 紧跟 header */
-        const char* tag = (const char*)(buf + sizeof(elog_msg_header_t));
-        const char* msg_data = tag + hdr.tag_len;
+        /* 将 tag 和 msg 复制到独立 buffer 并 null-terminate */
+        char tag_buf[ELOG_MAX_TAG_LEN + 1] = {0};
+        char msg_buf[ELOG_MAX_MSG_LEN + 1] = {0};
+
+        size_t tag_off = sizeof(elog_msg_header_t);
+        size_t msg_off = tag_off + hdr.tag_len;
+
+        if (hdr.tag_len > 0 && hdr.tag_len <= ELOG_MAX_TAG_LEN) {
+            memcpy(tag_buf, buf + tag_off, hdr.tag_len);
+        }
+        if (hdr.msg_len > 0 && msg_off + hdr.msg_len <= sizeof(buf)) {
+            memcpy(msg_buf, buf + msg_off, hdr.msg_len);
+        }
 
         /* 写入 ring buffer (使用客户端提供的 pid/tid) */
         if (g_daemon_rb) {
             int ret = elog_ring_buf_log_from(&g_daemon_rb->base,
                 (elog_id_t)hdr.log_id, (elog_level_t)hdr.level,
-                hdr.pid, hdr.tid, hdr.line, tag, msg_data);
+                hdr.pid, hdr.tid, hdr.line, tag_buf, msg_buf);
             if (ret != ELOG_OK) {
                 /* prune drop 或 buffer full, 静默忽略 */
             }
@@ -90,6 +100,5 @@ void* elogd_listener_thread(void* arg) {
     }
 
     close(fd);
-    unlink(ELOG_DAEMON_SOCK_PATH);
-    return NULL;
+    unlink(g_daemon_write_sock);    return NULL;
 }

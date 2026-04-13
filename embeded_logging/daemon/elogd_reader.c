@@ -195,12 +195,12 @@ void* elogd_reader_thread(void* arg) {
         return NULL;
     }
 
-    unlink(ELOG_DAEMON_READER_SOCK);
+    unlink(g_daemon_reader_sock);
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ELOG_DAEMON_READER_SOCK, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, g_daemon_reader_sock, sizeof(addr.sun_path) - 1);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("elogd_reader: bind");
@@ -284,7 +284,7 @@ void* elogd_reader_thread(void* arg) {
     usleep(200000);  /* 给线程退出时间 */
 
     close(fd);
-    unlink(ELOG_DAEMON_READER_SOCK);
+    unlink(g_daemon_reader_sock);
     elog_mutex_destroy(&s_clients_lock);
     return NULL;
 }
