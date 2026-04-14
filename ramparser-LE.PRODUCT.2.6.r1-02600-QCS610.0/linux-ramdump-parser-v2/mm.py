@@ -144,9 +144,19 @@ def get_vmemmap(ramdump):
     # arch/arm64/include/asm/pgtable.h
     # kernel/arch/arm64/include/asm/memory.h
     if (ramdump.kernel_version < (3, 18, 0)):
-        nlevels = int(ramdump.get_config_val("CONFIG_ARM64_PGTABLE_LEVELS"))
+        nlevels = ramdump.get_config_val("CONFIG_ARM64_PGTABLE_LEVELS")
     else:
-        nlevels = int(ramdump.get_config_val("CONFIG_PGTABLE_LEVELS"))
+        nlevels = ramdump.get_config_val("CONFIG_PGTABLE_LEVELS")
+
+    if nlevels is None or nlevels == 0:
+        va_bits_val = ramdump.get_config_val("CONFIG_ARM64_VA_BITS")
+        if va_bits_val is None:
+            va_bits_val = ramdump.va_bits
+        nlevels = 2 if va_bits_val <= 39 else (3 if va_bits_val <= 47 else 4)
+        if ramdump.kernel_version < (3, 18, 0):
+            nlevels = max(nlevels, 3)
+    else:
+        nlevels = int(nlevels)
 
     if ramdump.is_config_defined("CONFIG_ARM64_64K_PAGES"):
         page_shift = 16
@@ -157,7 +167,7 @@ def get_vmemmap(ramdump):
     pgdir_shift = ((page_shift - 3) * nlevels) + 3
     pud_shift = pgdir_shift
     pud_size = 1 << pud_shift
-    va_bits = int(ramdump.get_config_val("CONFIG_ARM64_VA_BITS"))
+    va_bits = int(ramdump.get_config_val("CONFIG_ARM64_VA_BITS") or ramdump.va_bits)
     spsize = ramdump.sizeof('struct page')
     vmemmap_size = bitops.align((1 << (va_bits - page_shift)) * spsize,
                                 pud_size)

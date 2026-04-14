@@ -103,6 +103,10 @@ class struct_member_offset(object):
             'struct kmem_cache', 'node')
         self.kmemcache_cpu_page = ramdump.field_offset(
             'struct kmem_cache_cpu', 'page')
+        if self.kmemcache_cpu_page is None:
+            # kernel 5.x+ renamed 'page' to 'slab'
+            self.kmemcache_cpu_page = ramdump.field_offset(
+                'struct kmem_cache_cpu', 'slab')
         self.kmemcpucache_cpu_slab = ramdump.field_offset(
             'struct kmem_cache', 'cpu_slab')
         if ramdump.is_config_defined('CONFIG_SLUB_CPU_PARTIAL'):
@@ -121,6 +125,10 @@ class struct_member_offset(object):
 
         self.page_objects = ramdump.field_offset(
                             'struct page', 'objects')
+        # Modern kernels (5.x+) moved objects into struct slab counters
+        if self.page_objects is None:
+            self.page_objects = ramdump.field_offset(
+                                'struct slab', 'counters')
         self.track_cpu = ramdump.field_offset(
                             'struct track', 'cpu')
         self.track_when = ramdump.field_offset(
@@ -131,10 +139,16 @@ class struct_member_offset(object):
                             'struct track', 'pid')
         self.page_freelist = ramdump.field_offset(
                             'struct page', 'freelist')
+        if self.page_freelist is None:
+            self.page_freelist = ramdump.field_offset(
+                                'struct slab', 'freelist')
         self.sizeof_struct_track = ramdump.sizeof(
                                             'struct track')
         self.cpu_cache_page_offset = ramdump.field_offset(
                             'struct kmem_cache_cpu', 'page')
+        if self.cpu_cache_page_offset is None:
+            self.cpu_cache_page_offset = ramdump.field_offset(
+                                'struct kmem_cache_cpu', 'slab')
         self.cpu_partial_offset = ramdump.field_offset(
                             'struct kmem_cache_cpu', 'partial')
         self.sizeof_void_pointer = ramdump.sizeof(

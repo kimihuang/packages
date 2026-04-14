@@ -2671,6 +2671,8 @@ class RamDump():
         if virtual:
             if cpu is not None:
                 pcpu_offset = self.per_cpu_offset(cpu)
+                if pcpu_offset is None:
+                    pcpu_offset = 0
                 addr_or_name = self.resolve_virt(addr_or_name)
                 addr_or_name += pcpu_offset
                 per_cpu_string = ' with per-cpu offset of ' + hex(pcpu_offset)
@@ -2740,7 +2742,10 @@ class RamDump():
             return 0
         per_cpu_offset_addr_indexed = self.array_index(
             per_cpu_offset_addr, 'unsigned long', cpu)
-        return self.read_slong(per_cpu_offset_addr_indexed)
+        result = self.read_slong(per_cpu_offset_addr_indexed)
+        if result is None:
+            return 0
+        return result
 
 
     def set_available_cores(self):
@@ -2752,7 +2757,10 @@ class RamDump():
         if (major, minor) >= (4, 5):
             cpu_present_bits_addr = self.address_of('__cpu_present_mask')
             bits_offset = self.field_offset('struct cpumask', 'bits')
-            cpu_present_bits = self.read_word(cpu_present_bits_addr + bits_offset)
+            if bits_offset is not None:
+                cpu_present_bits = self.read_word(cpu_present_bits_addr + bits_offset)
+            else:
+                cpu_present_bits = self.read_word(cpu_present_bits_addr)
         self.available_cores.clear()
         while cpu_present_bits:
             if cpu_present_bits & 1:
@@ -2778,7 +2786,16 @@ class RamDump():
         return (self.available_cores)
 
     def is_thread_info_in_task(self):
-        return self.is_config_defined('CONFIG_THREAD_INFO_IN_TASK')
+        if self.is_config_defined('CONFIG_THREAD_INFO_IN_TASK'):
+            return True
+        if not self.is_config_defined('CONFIG_THREAD_INFO_IN_TASK') and \
+           self.get_config_val('CONFIG_THREAD_INFO_IN_TASK') is None:
+            # No kernel config available; detect from struct layout:
+            # if thread_info has no 'task' field, it's embedded in task_struct
+            task_off = self.field_offset('struct thread_info', 'task')
+            if task_off is None:
+                return True
+        return False
 
     def get_thread_info_addr(self, task_addr):
         if self.is_thread_info_in_task():

@@ -163,6 +163,9 @@ def dump_isolation_data(ramdump):
 
 def dump_cpufreq_data(ramdump):
     cpufreq_data_addr = ramdump.address_of('cpufreq_cpu_data')
+    if cpufreq_data_addr is None:
+        print_out_str("\nCPU Frequency information: not available (no cpufreq_cpu_data)\n")
+        return
     cpuinfo_off = ramdump.field_offset('struct cpufreq_policy', 'cpuinfo')
     runqueues_addr = ramdump.address_of('runqueues')
     print_out_str("\nCPU Frequency information:\n" + "-" * 10)
