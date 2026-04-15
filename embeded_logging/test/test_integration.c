@@ -6,7 +6,8 @@
  *
  * 覆盖的 elog.h 接口:
  *   ELOG_V, ELOG_D, ELOG_I, ELOG_W, ELOG_E, ELOG_F (MAIN buffer, 6 个级别宏)
- *   ELOG_RADIO, ELOG_EVENTS, ELOG_SYSTEM, ELOG_CRASH, ELOG_KERNEL (5 个 buffer 宏)
+ *   ELOG_RADIO_I/W/E, ELOG_EVENTS_I/W/E, ELOG_SYSTEM_I/W/E,
+ *   ELOG_CRASH_E, ELOG_KERNEL_W (编译期级别过滤)
  *   elog_write_ex() (任意 log_id 写入)
  *   elogd_client_send_binary() (二进制安全发送)
  *
@@ -325,8 +326,8 @@ static void test_e2e_multi_buffer(void) {
 
     /* 向不同 buffer 写入, 用唯一 tag */
     ELOG_I("mb_main", "%s", "hello_main");
-    ELOG_RADIO(ELOG_LEVEL_INFO, "mb_radio", "%s", "hello_radio");
-    ELOG_SYSTEM(ELOG_LEVEL_INFO, "mb_system", "%s", "hello_system");
+    ELOG_RADIO_I("mb_radio", "hello_radio");
+    ELOG_SYSTEM_I("mb_system", "hello_system");
     usleep(200000);
 
     /* 各自读到自己的 */
@@ -349,8 +350,8 @@ static void test_e2e_log_mask(void) {
 
     /* 向 3 个 buffer 写入 */
     ELOG_I("lm_main", "%s", "m");
-    ELOG_RADIO(ELOG_LEVEL_INFO, "lm_radio", "%s", "r");
-    ELOG_CRASH(ELOG_LEVEL_INFO, "lm_crash", "%s", "c");
+    ELOG_RADIO_I("lm_radio", "r");
+    ELOG_CRASH_I("lm_crash", "c");
     usleep(200000);
 
     /* 只订阅 RADIO, 不应收到 MAIN 或 CRASH */
@@ -366,8 +367,8 @@ static void test_e2e_log_mask(void) {
 static void test_e2e_events_kernel(void) {
     printf("  test_e2e_events_kernel...\n");
 
-    ELOG_EVENTS(ELOG_LEVEL_INFO, "evt", "event_data=%d", 42);
-    ELOG_KERNEL(ELOG_LEVEL_WARN, "kern", "oops=%s", "null_ptr");
+    ELOG_EVENTS_I("evt", "event_data=%d", 42);
+    ELOG_KERNEL_W("kern", "oops=%s", "null_ptr");
     usleep(200000);
 
     log_entry_t e_events[10], e_kernel[10];
@@ -388,7 +389,7 @@ static void test_e2e_buffer_stats(void) {
 
     /* 向 3 个 buffer 各写一条 */
     ELOG_I("bs_main", "%s", "x");
-    ELOG_RADIO(ELOG_LEVEL_INFO, "bs_radio", "%s", "y");
+    ELOG_RADIO_I("bs_radio", "y");
     usleep(200000);
 
     /* stats 命令应返回多行, 每行一个 buffer */
@@ -481,7 +482,7 @@ static void test_concurrent_readers(void) {
         snprintf(msg, sizeof(msg), "r%d", i);
         ELOG_I("cr", "%s", msg);
         snprintf(msg, sizeof(msg), "s%d", i);
-        ELOG_SYSTEM(ELOG_LEVEL_INFO, "cr_sys", "%s", msg);
+        ELOG_SYSTEM_I("cr_sys", "%s", msg);
     }
     usleep(200000);
 
@@ -630,7 +631,7 @@ static void test_concurrent_multi_buffer(void) {
         child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "r%d", i);
-            ELOG_RADIO(ELOG_LEVEL_INFO, "cmb_r", "%s", msg);
+            ELOG_RADIO_I("cmb_r", "%s", msg);
         }
         _exit(0);
     }
@@ -640,7 +641,7 @@ static void test_concurrent_multi_buffer(void) {
         child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "c%d", i);
-            ELOG_CRASH(ELOG_LEVEL_ERROR, "cmb_c", "%s", msg);
+            ELOG_CRASH_E("cmb_c", "%s", msg);
         }
         _exit(0);
     }
