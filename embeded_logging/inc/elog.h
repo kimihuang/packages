@@ -5,8 +5,9 @@
  * 使用示例:
  *   elog_init();
  *   elog_set_level(ELOG_LEVEL_INFO);
- *   elog_info("sensor", "temperature=%d", 25);
- *   ELOG_I("sensor", "status=OK");   // 编译期过滤版本
+ *   ELOG_I("sensor", "temperature=%d", 25);       // MAIN buffer
+ *   ELOG_RADIO(ELOG_LEVEL_WARN, "rf", "rssi=%d", -80);  // RADIO buffer
+ *   ELOG_CRASH(ELOG_LEVEL_ERROR, "panic", "fatal");      // CRASH buffer
  *   elog_deinit();
  */
 
@@ -123,6 +124,27 @@ void elog_fatal(const char* tag, const char* fmt, ...)
 #define ELOG_F(tag, fmt, ...) \
     do { if (ELOG_LEVEL_FATAL >= ELOG_LEVEL_DEFAULT) \
         elog_fatal(tag, fmt, ##__VA_ARGS__); } while(0)
+
+/* ===== Buffer 指定宏 ===== */
+
+/**
+ * 向指定 buffer 写入日志
+ * 使用: ELOG_RADIO(ELOG_LEVEL_INFO, "tag", "msg=%d", 42)
+ */
+#define ELOG_RADIO(level, tag, fmt, ...) \
+    elog_write_ex(ELOG_ID_RADIO, level, tag, fmt, ##__VA_ARGS__)
+
+#define ELOG_EVENTS(level, tag, fmt, ...) \
+    elog_write_ex(ELOG_ID_EVENTS, level, tag, fmt, ##__VA_ARGS__)
+
+#define ELOG_SYSTEM(level, tag, fmt, ...) \
+    elog_write_ex(ELOG_ID_SYSTEM, level, tag, fmt, ##__VA_ARGS__)
+
+#define ELOG_CRASH(level, tag, fmt, ...) \
+    elog_write_ex(ELOG_ID_CRASH, level, tag, fmt, ##__VA_ARGS__)
+
+#define ELOG_KERNEL(level, tag, fmt, ...) \
+    elog_write_ex(ELOG_ID_KERNEL, level, tag, fmt, ##__VA_ARGS__)
 
 /* ===== ISR 安全日志 ===== */
 

@@ -5,8 +5,9 @@
  * 测试流程: fork elogd → 通过 elog 公共 API 写日志 → reader socket 读取 → 验证
  *
  * 覆盖的 elog.h 接口:
- *   ELOG_V, ELOG_D, ELOG_I, ELOG_W, ELOG_E, ELOG_F (6 个级别宏)
- *   elog_write_ex() (指定 log_id 写入)
+ *   ELOG_V, ELOG_D, ELOG_I, ELOG_W, ELOG_E, ELOG_F (MAIN buffer, 6 个级别宏)
+ *   ELOG_RADIO, ELOG_EVENTS, ELOG_SYSTEM, ELOG_CRASH, ELOG_KERNEL (5 个 buffer 宏)
+ *   elog_write_ex() (任意 log_id 写入)
  *   elogd_client_send_binary() (二进制安全发送)
  *
  * 注意: 所有测试共享同一个 daemon 实例, 每个测试用唯一 tag 隔离数据.
@@ -133,12 +134,6 @@ static int send_log(const char* tag, const char* msg, uint8_t level) {
     case ELOG_LEVEL_FATAL:   ELOG_F(tag, "%s", msg); break;
     default: ELOG_I(tag, "%s", msg); break;
     }
-    return 0;
-}
-
-/* 指定 log_id 发送到非 MAIN buffer */
-static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level) {
-    elog_write_ex((elog_id_t)log_id, (elog_level_t)level, tag, "%s", msg);
     return 0;
 }
 
@@ -329,9 +324,9 @@ static void test_e2e_multi_buffer(void) {
     printf("  test_e2e_multi_buffer...\n");
 
     /* 向不同 buffer 写入, 用唯一 tag */
-    send_log_ex(ELOG_ID_MAIN, "mb_main", "hello_main", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "mb_radio", "hello_radio", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_SYSTEM, "mb_system", "hello_system", ELOG_LEVEL_INFO);
+    ELOG_I("mb_main", "%s", "hello_main");
+    ELOG_RADIO(ELOG_LEVEL_INFO, "mb_radio", "%s", "hello_radio");
+    ELOG_SYSTEM(ELOG_LEVEL_INFO, "mb_system", "%s", "hello_system");
     usleep(200000);
 
     /* 各自读到自己的 */
@@ -353,9 +348,9 @@ static void test_e2e_log_mask(void) {
     printf("  test_e2e_log_mask...\n");
 
     /* 向 3 个 buffer 写入 */
-    send_log_ex(ELOG_ID_MAIN, "lm_main", "m", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "lm_radio", "r", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_CRASH, "lm_crash", "c", ELOG_LEVEL_INFO);
+    ELOG_I("lm_main", "%s", "m");
+    ELOG_RADIO(ELOG_LEVEL_INFO, "lm_radio", "%s", "r");
+    ELOG_CRASH(ELOG_LEVEL_INFO, "lm_crash", "%s", "c");
     usleep(200000);
 
     /* 只订阅 RADIO, 不应收到 MAIN 或 CRASH */
@@ -368,12 +363,32 @@ static void test_e2e_log_mask(void) {
     T_OK("e2e log mask");
 }
 
+static void test_e2e_events_kernel(void) {
+    printf("  test_e2e_events_kernel...\n");
+
+    ELOG_EVENTS(ELOG_LEVEL_INFO, "evt", "event_data=%d", 42);
+    ELOG_KERNEL(ELOG_LEVEL_WARN, "kern", "oops=%s", "null_ptr");
+    usleep(200000);
+
+    log_entry_t e_events[10], e_kernel[10];
+    int n1 = reader_read_by_tag_mask("evt", (1 << ELOG_ID_EVENTS), e_events, 10);
+    int n2 = reader_read_by_tag_mask("kern", (1 << ELOG_ID_KERNEL), e_kernel, 10);
+
+    T_ASSERT(n1 >= 1, "events entries found");
+    T_ASSERT(e_events[0].hdr.log_id == ELOG_ID_EVENTS, "log_id is EVENTS");
+    T_ASSERT(strcmp(e_events[0].msg, "event_data=42") == 0, "events msg correct");
+    T_ASSERT(n2 >= 1, "kernel entries found");
+    T_ASSERT(e_kernel[0].hdr.log_id == ELOG_ID_KERNEL, "log_id is KERNEL");
+    T_ASSERT(strcmp(e_kernel[0].msg, "oops=null_ptr") == 0, "kernel msg correct");
+    T_OK("e2e events + kernel");
+}
+
 static void test_e2e_buffer_stats(void) {
     printf("  test_e2e_buffer_stats...\n");
 
     /* 向 3 个 buffer 各写一条 */
-    send_log_ex(ELOG_ID_MAIN, "bs_main", "x", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "bs_radio", "y", ELOG_LEVEL_INFO);
+    ELOG_I("bs_main", "%s", "x");
+    ELOG_RADIO(ELOG_LEVEL_INFO, "bs_radio", "%s", "y");
     usleep(200000);
 
     /* stats 命令应返回多行, 每行一个 buffer */
@@ -464,9 +479,9 @@ static void test_concurrent_readers(void) {
     for (int i = 0; i < 20; i++) {
         char msg[32];
         snprintf(msg, sizeof(msg), "r%d", i);
-        send_log_ex(ELOG_ID_MAIN, "cr", msg, ELOG_LEVEL_INFO);
+        ELOG_I("cr", "%s", msg);
         snprintf(msg, sizeof(msg), "s%d", i);
-        send_log_ex(ELOG_ID_SYSTEM, "cr_sys", msg, ELOG_LEVEL_INFO);
+        ELOG_SYSTEM(ELOG_LEVEL_INFO, "cr_sys", "%s", msg);
     }
     usleep(200000);
 
@@ -605,7 +620,7 @@ static void test_concurrent_multi_buffer(void) {
         child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "m%d", i);
-            send_log_ex(ELOG_ID_MAIN, "cmb_m", msg, ELOG_LEVEL_INFO);
+            ELOG_I("cmb_m", "%s", msg);
         }
         _exit(0);
     }
@@ -615,7 +630,7 @@ static void test_concurrent_multi_buffer(void) {
         child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "r%d", i);
-            send_log_ex(ELOG_ID_RADIO, "cmb_r", msg, ELOG_LEVEL_INFO);
+            ELOG_RADIO(ELOG_LEVEL_INFO, "cmb_r", "%s", msg);
         }
         _exit(0);
     }
@@ -625,7 +640,7 @@ static void test_concurrent_multi_buffer(void) {
         child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "c%d", i);
-            send_log_ex(ELOG_ID_CRASH, "cmb_c", msg, ELOG_LEVEL_ERROR);
+            ELOG_CRASH(ELOG_LEVEL_ERROR, "cmb_c", "%s", msg);
         }
         _exit(0);
     }
@@ -739,6 +754,7 @@ int main(void) {
     test_e2e_cmd_stats();
     test_e2e_multi_buffer();
     test_e2e_log_mask();
+    test_e2e_events_kernel();
     test_e2e_buffer_stats();
     test_concurrent_writers();
     test_concurrent_readers();
