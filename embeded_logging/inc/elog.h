@@ -71,6 +71,14 @@ void elog_write(elog_level_t level, const char* tag, const char* fmt, ...)
     __attribute__((format(printf, 3, 4)));
 
 /**
+ * 写入日志到指定 buffer
+ * @param log_id  目标 buffer ID (ELOG_ID_MAIN, ELOG_ID_RADIO, ...)
+ */
+void elog_write_ex(elog_id_t log_id, elog_level_t level,
+                   const char* tag, const char* fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+
+/**
  * 写入日志 (va_list 版本)
  */
 void elog_vwrite(elog_level_t level, const char* tag, const char* fmt, va_list ap);

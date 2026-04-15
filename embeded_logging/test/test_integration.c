@@ -2,11 +2,17 @@
  * @file test_integration.c
  * @brief 系统级端到端集成测试
  *
- * 测试流程: fork elogd → app 用 sendto 写日志 → reader socket 读取 → 验证
+ * 测试流程: fork elogd → 通过 elog 公共 API 写日志 → reader socket 读取 → 验证
+ *
+ * 覆盖的 elog.h 接口:
+ *   ELOG_V, ELOG_D, ELOG_I, ELOG_W, ELOG_E, ELOG_F (6 个级别宏)
+ *   elog_write_ex() (指定 log_id 写入)
+ *   elogd_client_send_binary() (二进制安全发送)
  *
  * 注意: 所有测试共享同一个 daemon 实例, 每个测试用唯一 tag 隔离数据.
  */
 
+#include "elog.h"
 #include "elog_def.h"
 #include "elogd.h"
 #include <stdio.h>
@@ -95,36 +101,45 @@ static void stop_elogd(void) {
     rmdir(s_tmp_dir);
 }
 
-/* ===== 直接构造 datagram 并发送 ===== */
+/* ===== 通过 elog 公共 API 发送日志 ===== */
 
-static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level);
-
-static int send_log(const char* tag, const char* msg, uint8_t level) {
-    return send_log_ex(ELOG_ID_MAIN, tag, msg, level);
+/**
+ * 自定义 logger: 绕过本地 buffer 和 stdout transport, 直接发送到 daemon.
+ * 这样既避免 stdout 噪声, 也不受 elog filter 级别限制.
+ */
+static void daemon_logger(const elog_msg_header_t* hdr,
+                           const char* tag, const char* msg) {
+    elogd_client_send(hdr, tag, msg);
 }
 
-/* 指定 log_id 发送日志 */
+/* 子进程初始化 (fork 后需要重新 init) */
+static void child_elog_init(void) {
+    g_daemon_write_sock = s_write_sock;
+    g_daemon_cmd_sock    = s_cmd_sock;
+    g_daemon_reader_sock = s_reader_sock;
+    elog_init();
+    elog_set_logger(daemon_logger);
+    elogd_client_init();
+}
+
+/* 用指定级别宏发送 (覆盖 ELOG_V/D/I/W/E/F 全部 6 个) */
+static int send_log(const char* tag, const char* msg, uint8_t level) {
+    switch (level) {
+    case ELOG_LEVEL_VERBOSE: ELOG_V(tag, "%s", msg); break;
+    case ELOG_LEVEL_DEBUG:   ELOG_D(tag, "%s", msg); break;
+    case ELOG_LEVEL_INFO:    ELOG_I(tag, "%s", msg); break;
+    case ELOG_LEVEL_WARN:    ELOG_W(tag, "%s", msg); break;
+    case ELOG_LEVEL_ERROR:   ELOG_E(tag, "%s", msg); break;
+    case ELOG_LEVEL_FATAL:   ELOG_F(tag, "%s", msg); break;
+    default: ELOG_I(tag, "%s", msg); break;
+    }
+    return 0;
+}
+
+/* 指定 log_id 发送到非 MAIN buffer */
 static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level) {
-    elog_msg_header_t hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.log_id = log_id;
-    hdr.level = level;
-    hdr.tag_len = (uint16_t)(tag ? strlen(tag) : 0);
-    hdr.msg_len = (uint16_t)(msg ? strlen(msg) : 0);
-
-    uint8_t buf[sizeof(elog_msg_header_t) + 512];
-    memcpy(buf, &hdr, sizeof(hdr));
-    if (hdr.tag_len > 0) memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
-    if (hdr.msg_len > 0) memcpy(buf + sizeof(hdr) + hdr.tag_len, msg, hdr.msg_len);
-
-    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) return -1;
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    strncpy(addr.sun_path, s_write_sock, sizeof(addr.sun_path) - 1);
-    ssize_t sent = sendto(fd, buf, sizeof(hdr) + hdr.tag_len + hdr.msg_len,
-                           0, (struct sockaddr*)&addr, sizeof(addr));
-    close(fd);
-    return (sent > 0) ? 0 : -1;
+    elog_write_ex((elog_id_t)log_id, (elog_level_t)level, tag, "%s", msg);
+    return 0;
 }
 
 /* ===== Reader socket ===== */
@@ -419,6 +434,7 @@ static void test_concurrent_writers(void) {
         if (pid < 0) { T_ASSERT(0, "fork"); return; }
         if (pid == 0) {
             /* 子进程: 快速写入 */
+            child_elog_init();
             for (int i = 0; i < PER_PROC; i++) {
                 char msg[32];
                 snprintf(msg, sizeof(msg), "p%d_%d", p, i);
@@ -586,6 +602,7 @@ static void test_concurrent_multi_buffer(void) {
     /* 3 个子进程各写一个 buffer */
     pid_t p_main = fork();
     if (p_main == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "m%d", i);
             send_log_ex(ELOG_ID_MAIN, "cmb_m", msg, ELOG_LEVEL_INFO);
@@ -595,6 +612,7 @@ static void test_concurrent_multi_buffer(void) {
 
     pid_t p_radio = fork();
     if (p_radio == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "r%d", i);
             send_log_ex(ELOG_ID_RADIO, "cmb_r", msg, ELOG_LEVEL_INFO);
@@ -604,6 +622,7 @@ static void test_concurrent_multi_buffer(void) {
 
     pid_t p_crash = fork();
     if (p_crash == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "c%d", i);
             send_log_ex(ELOG_ID_CRASH, "cmb_c", msg, ELOG_LEVEL_ERROR);
@@ -669,20 +688,9 @@ static void test_e2e_binary_event(void) {
     hdr.tag_len = (uint16_t)strlen(tag);
     hdr.msg_len = (uint16_t)data_len;
 
-    uint8_t buf[sizeof(elog_msg_header_t) + 256];
-    memcpy(buf, &hdr, sizeof(hdr));
-    memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
-    memcpy(buf + sizeof(hdr) + hdr.tag_len, event_data, data_len);
-    size_t total = sizeof(hdr) + hdr.tag_len + hdr.msg_len;
-
-    /* 发送 */
-    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    T_ASSERT(fd >= 0, "socket");
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    strncpy(addr.sun_path, s_write_sock, sizeof(addr.sun_path) - 1);
-    ssize_t sent = sendto(fd, buf, total, 0, (struct sockaddr*)&addr, sizeof(addr));
-    close(fd);
-    T_ASSERT(sent > 0, "send binary event");
+    /* 通过 elogd_client API 发送 (binary-safe) */
+    int ret = elogd_client_send_binary(&hdr, tag, event_data, hdr.msg_len);
+    T_ASSERT(ret == ELOG_OK, "send binary event");
 
     usleep(200000);
 
@@ -716,6 +724,14 @@ int main(void) {
     }
     printf("  elogd started (pid=%d)\n", (int)s_elogd_pid);
 
+    /* daemon 就绪后初始化 elog, 设置自定义 logger 直接发到 daemon */
+    g_daemon_write_sock = s_write_sock;
+    g_daemon_cmd_sock    = s_cmd_sock;
+    g_daemon_reader_sock = s_reader_sock;
+    elog_init();
+    elog_set_logger(daemon_logger);
+    elogd_client_init();
+
     test_e2e_basic();
     test_e2e_level_filter();
     test_e2e_header_fields();
@@ -732,6 +748,7 @@ int main(void) {
     test_e2e_binary_event();
 
     stop_elogd();
+    elog_deinit();
 
     printf("  Results: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

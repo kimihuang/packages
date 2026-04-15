@@ -102,7 +102,8 @@ static void dispatch_to_transports(const char* text, size_t len) {
 }
 
 /* 核心写入路径 */
-static void elog_write_internal(elog_level_t level, const char* tag,
+static void elog_write_internal(elog_id_t log_id, elog_level_t level,
+                                 const char* tag,
                                  const char* file, int line,
                                  const char* fmt, va_list ap) {
     if (!g_elog.initialized) return;
@@ -119,7 +120,7 @@ static void elog_write_internal(elog_level_t level, const char* tag,
     /* 3. 构造 header */
     elog_msg_header_t hdr;
     memset(&hdr, 0, sizeof(hdr));
-    hdr.log_id = (uint8_t)ELOG_ID_MAIN;
+    hdr.log_id = (uint8_t)log_id;
     hdr.level = (uint8_t)level;
     hdr.line = (uint16_t)(line > 0 ? line : 0);
     hdr.pid = (uint16_t)(g_elog.ring_buf.base.capacity ?
@@ -255,7 +256,7 @@ int elog_reset_tag_level(const char* tag) {
 /* ===== 日志输出 ===== */
 
 void elog_vwrite(elog_level_t level, const char* tag, const char* fmt, va_list ap) {
-    elog_write_internal(level, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, level, tag, NULL, 0, fmt, ap);
 }
 
 void elog_write(elog_level_t level, const char* tag, const char* fmt, ...) {
@@ -265,45 +266,53 @@ void elog_write(elog_level_t level, const char* tag, const char* fmt, ...) {
     va_end(ap);
 }
 
+void elog_write_ex(elog_id_t log_id, elog_level_t level,
+                   const char* tag, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    elog_write_internal(log_id, level, tag, NULL, 0, fmt, ap);
+    va_end(ap);
+}
+
 void elog_verbose(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_VERBOSE, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_VERBOSE, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
 void elog_debug(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_DEBUG, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_DEBUG, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
 void elog_info(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_INFO, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_INFO, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
 void elog_warn(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_WARN, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_WARN, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
 void elog_error(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_ERROR, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_ERROR, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
 void elog_fatal(const char* tag, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    elog_write_internal(ELOG_LEVEL_FATAL, tag, NULL, 0, fmt, ap);
+    elog_write_internal(ELOG_ID_MAIN, ELOG_LEVEL_FATAL, tag, NULL, 0, fmt, ap);
     va_end(ap);
 }
 
