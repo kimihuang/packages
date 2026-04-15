@@ -20,7 +20,7 @@
 | 存储消耗 | 持久化日志占用存储空间 | 定期清理和轮转 | 已管理 |
 | 权限问题 | 应用无法读取系统日志（无特权） | 使用shell权限或root访问 | 按设计实现 |
 | 集成测试未使用libelog.a暴露的打印接口， 而是直接发送socket给logd | NA | NA | 未解决 |
-| 当前的libelog是编译为静态库， 对于linux系统环境， libelog应该编译为动态链接库 | NA | NA | 未解决 |
+| elogd_clent.c 应该移动liblog，而不是放到logd守护进程， 由配置方式选择路由到logd还是路由到文件等 | NA | NA | 未解决 |
 | 当前的logbuffer采用的环形缓冲区，android的logd使用的链表，每一条日志是一个entry， 便于做prune裁剪处理 | NA | NA | 未解决 |
 | 针对baremetal，rtos， linux环境，embeded_logging如何使用一套框架，满足各环境使用 | NA | NA | 未解决 |
 
