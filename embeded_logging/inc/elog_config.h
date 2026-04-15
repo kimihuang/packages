@@ -120,7 +120,7 @@ extern "C" {
 
 /* ===== elogd 守护进程配置 ===== */
 #ifndef ELOG_DAEMON_ENABLE
-#define ELOG_DAEMON_ENABLE         0        /* 客户端: 通过 socket 发送日志到 elogd */
+#define ELOG_DAEMON_ENABLE         1        /* 客户端: 通过 socket 发送日志到 elogd */
 #endif
 
 #endif /* ELOG_CONFIG_H */

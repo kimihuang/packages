@@ -5,7 +5,6 @@
 
 #include "elogd.h"
 #include "elog_buf.h"
-#include "elog_transport_file.h"
 #include "elog_format.h"
 #include "elog_event.h"
 #include "elog_def.h"
@@ -13,33 +12,37 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 extern volatile bool g_daemon_running;
 
 /* 每 buffer 独立的 flush 状态 */
 typedef struct {
-    elog_file_transport_t* transport;
+    int  fd;          /* POSIX file descriptor */
     size_t read_pos;
 } buf_flush_t;
 
 typedef struct {
-    elog_file_transport_t* transport;
+    int fd;
     int count;
 } flush_ctx_t;
+
+/* 直接写文件 */
+static void flush_write(int fd, const char* data, size_t len) {
+    if (fd >= 0 && data && len > 0) {
+        write(fd, data, len);
+    }
+}
 
 static int flush_to_file_cb(const elog_msg_header_t* hdr,
                               const char* tag, const char* msg, void* user) {
     flush_ctx_t* ctx = (flush_ctx_t*)user;
-    if (!ctx->transport || !ctx->transport->base.is_open(&ctx->transport->base)) {
-        return 0;
-    }
+    if (ctx->fd < 0) return 0;
 
     elog_format_ctx_t fmt;
     elog_format_text(&fmt, hdr, tag, msg);
-
     if (fmt.len > 0) {
-        ctx->transport->base.write(&ctx->transport->base,
-                                    (const uint8_t*)fmt.buf, (size_t)fmt.len);
+        flush_write(ctx->fd, fmt.buf, (size_t)fmt.len);
     }
     ctx->count++;
     return 0;
@@ -49,7 +52,7 @@ static int flush_to_file_cb(const elog_msg_header_t* hdr,
 static int flush_event_to_file_cb(const elog_msg_header_t* hdr,
                                    const char* tag, const char* msg, void* user) {
     flush_ctx_t* ctx = (flush_ctx_t*)user;
-    if (!ctx->transport || !ctx->transport->base.is_open(&ctx->transport->base)) return 0;
+    if (ctx->fd < 0) return 0;
 
     uint32_t event_id = 0;
     if (hdr->msg_len >= 4) memcpy(&event_id, msg, 4);
@@ -103,7 +106,7 @@ static int flush_event_to_file_cb(const elog_msg_header_t* hdr,
     n = snprintf(fmt.buf + pos, sizeof(fmt.buf) - pos, "]\n");
     if (n > 0 && pos + (size_t)n < sizeof(fmt.buf)) pos += (size_t)n;
 
-    ctx->transport->base.write(&ctx->transport->base, (const uint8_t*)fmt.buf, pos);
+    flush_write(ctx->fd, fmt.buf, pos);
     ctx->count++;
     return 0;
 }
@@ -139,10 +142,14 @@ static size_t advance_read_pos(const uint8_t* buf, size_t cap,
     return pos;
 }
 
+static int open_log_file(const char* path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    return fd;
+}
+
 void* elogd_flusher_thread(void* arg) {
     (void)arg;
 
-    /* 每 buffer 独立文件 */
     static const char* k_log_files[ELOG_ID_MAX] = {
         "/var/log/elog_main.log",
         "/var/log/elog_radio.log",
@@ -152,20 +159,16 @@ void* elogd_flusher_thread(void* arg) {
         "/var/log/elog_kernel.log",
     };
 
-    elog_file_transport_t transports[ELOG_ID_MAX];
     buf_flush_t buf_states[ELOG_ID_MAX];
 
     for (int i = 0; i < ELOG_ID_MAX; i++) {
-        elog_file_transport_init(&transports[i], k_log_files[i], 0, 0);
-        transports[i].base.open(&transports[i].base);
-
-        buf_states[i].transport = &transports[i];
+        buf_states[i].fd = open_log_file(k_log_files[i]);
         buf_states[i].read_pos = 0;
 
         elog_ring_buf_t* rb = elogd_get_buf((elog_id_t)i);
         if (rb) {
             elog_mutex_lock(&rb->lock);
-            buf_states[i].read_pos = rb->write_pos;  /* 从 tail 开始 */
+            buf_states[i].read_pos = rb->write_pos;
             elog_mutex_unlock(&rb->lock);
         }
     }
@@ -178,7 +181,7 @@ void* elogd_flusher_thread(void* arg) {
             elog_mutex_lock(&rb->lock);
 
             if (buf_states[bid].read_pos != rb->write_pos) {
-                flush_ctx_t ctx = { .transport = &transports[bid], .count = 0 };
+                flush_ctx_t ctx = { .fd = buf_states[bid].fd, .count = 0 };
                 size_t end = rb->write_pos;
 
                 ELOG_DBG_FLUSHER("flush[%d]: rp=%zu wp=%zu", bid, buf_states[bid].read_pos, rb->write_pos);
@@ -196,13 +199,13 @@ void* elogd_flusher_thread(void* arg) {
                 ELOG_DBG_FLUSHER("flushed[%d]: count=%d new_rp=%zu", bid, ctx.count, new_rp);
 
                 buf_states[bid].read_pos = new_rp;
-                transports[bid].base.flush(&transports[bid].base);
+                if (buf_states[bid].fd >= 0) fsync(buf_states[bid].fd);
             }
 
             elog_mutex_unlock(&rb->lock);
         }
 
-        usleep(500000);  /* 500ms 轮询间隔 */
+        usleep(500000);
     }
 
     /* 退出前 flush 剩余数据 */
@@ -212,18 +215,17 @@ void* elogd_flusher_thread(void* arg) {
 
         elog_mutex_lock(&rb->lock);
         if (buf_states[bid].read_pos != rb->write_pos) {
-            flush_ctx_t ctx = { .transport = &transports[bid], .count = 0 };
+            flush_ctx_t ctx = { .fd = buf_states[bid].fd, .count = 0 };
             int (*cb)(const elog_msg_header_t*, const char*, const char*, void*) =
                 (bid == ELOG_ID_EVENTS) ? flush_event_to_file_cb : flush_to_file_cb;
             elog_ring_buf_flush_range(rb, buf_states[bid].read_pos,
                                        rb->write_pos,
                                        cb, &ctx);
-            transports[bid].base.flush(&transports[bid].base);
+            if (buf_states[bid].fd >= 0) fsync(buf_states[bid].fd);
         }
         elog_mutex_unlock(&rb->lock);
 
-        transports[bid].base.close(&transports[bid].base);
-        elog_file_transport_deinit(&transports[bid]);
+        if (buf_states[bid].fd >= 0) close(buf_states[bid].fd);
     }
 
     return NULL;

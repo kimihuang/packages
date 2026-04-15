@@ -227,18 +227,6 @@ typedef void (*elog_logger_func_t)(const elog_msg_header_t* hdr,
  */
 void elog_set_logger(elog_logger_func_t func);
 
-/* ===== Transport 注册 ===== */
-
-/**
- * 注册传输目标
- */
-int elog_add_transport(void* transport);
-
-/**
- * 注销传输目标
- */
-int elog_remove_transport(void* transport);
-
 /* ===== 统计 ===== */
 
 /**

@@ -1,9 +1,9 @@
 /**
  * @file elog.c
- * @brief elog 核心实现 — 初始化、日志写入、分发
+ * @brief elog 核心实现 — 初始化、日志写入
  *
  * 写入流程:
- *   elog_write() → elog_vwrite() → format → filter → buf.log → transport.dispatch
+ *   elog_write() → elog_vwrite() → format → filter → buf.log
  */
 
 #include "elog.h"
@@ -11,7 +11,6 @@
 #include "elog_format.h"
 #include "elog_stats.h"
 #include "elog_buf.h"
-#include "elog_transport.h"
 #include "elog_port.h"
 #if ELOG_PRUNE_ENABLE
 #include "elog_prune.h"
@@ -41,10 +40,6 @@ static struct {
     /* Buffer */
     elog_ring_buf_t ring_buf;
     bool            ring_buf_dynamic;   /* true: destroy 时 free buffer */
-
-    /* Transport */
-    elog_transport_registry_t registry;
-    elog_stdout_transport_t   stdout_transport;
 
     /* Reader */
     elog_reader_list_t reader_list;
@@ -94,13 +89,6 @@ static void elog_default_logger(const elog_msg_header_t* hdr,
 #endif
 }
 
-/* 将格式化后的文本分发到所有 transport */
-static void dispatch_to_transports(const char* text, size_t len) {
-    if (!g_elog.initialized) return;
-    elog_transport_dispatch(&g_elog.registry,
-                            (const uint8_t*)text, len);
-}
-
 /* 核心写入路径 */
 static void elog_write_internal(elog_id_t log_id, elog_level_t level,
                                  const char* tag,
@@ -133,14 +121,7 @@ static void elog_write_internal(elog_id_t log_id, elog_level_t level,
         g_elog.logger_func(&hdr, tag, msg_buf);
     }
 
-    /* 5. 格式化文本并分发到 transport */
-    elog_format_ctx_t fmt_ctx;
-    int fmt_len = elog_format_text(&fmt_ctx, &hdr, tag, msg_buf);
-    if (fmt_len > 0) {
-        dispatch_to_transports(fmt_ctx.buf, (size_t)fmt_len);
-    }
-
-    /* 6. 消费 ISR pending: ISR 写入后由正常上下文触发 transport flush */
+    /* 5. 消费 ISR pending: ISR 写入后由正常上下文触发 */
     if (g_elog.isr_pending_count > 0) {
         g_elog.isr_pending_count = 0;
         /* 通过 reader condvar 通知有新日志 */
@@ -184,15 +165,6 @@ int elog_init(void) {
     elog_ring_buf_set_prune(&g_elog.ring_buf, &g_elog.prune);
 #endif
 
-    /* 初始化 Transport Registry */
-    elog_transport_registry_init(&g_elog.registry);
-
-    /* 注册默认 StdoutTransport */
-    elog_stdout_transport_init(&g_elog.stdout_transport);
-    elog_stdout_transport_init_fd(&g_elog.stdout_transport, STDOUT_FILENO);
-    g_elog.stdout_transport.base.open(&g_elog.stdout_transport.base);
-    elog_transport_register(&g_elog.registry, &g_elog.stdout_transport.base);
-
     /* 初始化 ReaderList */
     elog_reader_list_init(&g_elog.reader_list);
 
@@ -209,14 +181,8 @@ int elog_init(void) {
 void elog_deinit(void) {
     if (!g_elog.initialized) return;
 
-    /* 注销所有 transport */
-    elog_transport_registry_destroy(&g_elog.registry);
-
     /* 销毁 ReaderList */
     elog_reader_list_destroy(&g_elog.reader_list);
-
-    /* 关闭 stdout transport */
-    g_elog.stdout_transport.base.close(&g_elog.stdout_transport.base);
 
     /* 销毁 RingBuffer */
     if (g_elog.ring_buf_dynamic) {
@@ -337,20 +303,6 @@ int elog_write_isr(elog_level_t level, const char* tag,
 
 void elog_set_logger(elog_logger_func_t func) {
     g_elog.logger_func = func;
-}
-
-/* ===== Transport 注册 ===== */
-
-int elog_add_transport(void* transport) {
-    if (!g_elog.initialized) return ELOG_ERR_NOT_INIT;
-    return elog_transport_register(&g_elog.registry,
-                                    (elog_transport_t*)transport);
-}
-
-int elog_remove_transport(void* transport) {
-    if (!g_elog.initialized) return ELOG_ERR_NOT_INIT;
-    return elog_transport_unregister(&g_elog.registry,
-                                      (elog_transport_t*)transport);
 }
 
 /* ===== 统计 ===== */

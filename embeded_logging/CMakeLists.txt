@@ -9,6 +9,7 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter -pthread)
 
 # 头文件搜索路径
 include_directories(${CMAKE_SOURCE_DIR}/inc)
+include_directories(${CMAKE_SOURCE_DIR}/daemon)
 
 # ===== 库 =====
 set(ELOG_SOURCES
@@ -19,8 +20,7 @@ set(ELOG_SOURCES
     src/elog_prune.c
     src/elog_event.c
     src/elog_buf_ring.c
-    src/elog_transport_stdout.c
-    src/elog_transport_file.c
+    src/elogd_client.c
     src/elog_port_linux.c
     src/elog_reader.c
 )
@@ -54,8 +54,6 @@ set(TEST_SOURCES
     test/test_elog_stats.c
     test/test_elog_prune.c
     test/test_elog_event.c
-    test/test_elog_transport.c
-    test/test_elog_transport_file.c
     test/test_elog_port.c
     test/test_elog_reader.c
     test/test_elogd.c
@@ -78,11 +76,9 @@ add_executable(elog_integration_test
     src/elog_prune.c
     src/elog_event.c
     src/elog_buf_ring.c
-    src/elog_transport_stdout.c
-    src/elog_transport_file.c
     src/elog_port_linux.c
     src/elog_reader.c
-    daemon/elogd_client.c)
+    src/elogd_client.c)
 target_include_directories(elog_integration_test PRIVATE
     ${CMAKE_SOURCE_DIR}/inc
     ${CMAKE_SOURCE_DIR}/src

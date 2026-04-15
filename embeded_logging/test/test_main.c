@@ -13,8 +13,6 @@ extern int test_elog_format(void);
 extern int test_elog_stats(void);
 extern int test_elog_prune(void);
 extern int test_elog_event(void);
-extern int test_elog_transport(void);
-extern int test_elog_transport_file(void);
 extern int test_elog_port(void);
 extern int test_elog_reader(void);
 extern int test_elogd(void);
@@ -31,8 +29,6 @@ static const struct {
     { "elog_stats",         test_elog_stats },
     { "elog_prune",         test_elog_prune },
     { "elog_event",         test_elog_event },
-    { "elog_transport",     test_elog_transport },
-    { "elog_transport_file", test_elog_transport_file },
     { "elog_port",            test_elog_port },
     { "elog_reader",          test_elog_reader },
     { "elogd",                test_elogd },
