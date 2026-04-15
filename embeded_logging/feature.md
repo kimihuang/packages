@@ -23,6 +23,7 @@
 | elogd_clent.c 应该移动liblog，而不是放到logd守护进程， 由配置方式选择路由到logd还是路由到文件等 | NA | NA | 未解决 |
 | 当前的logbuffer采用的环形缓冲区，android的logd使用的链表，每一条日志是一个entry， 便于做prune裁剪处理 | NA | NA | 未解决 |
 | 针对baremetal，rtos， linux环境，embeded_logging如何使用一套框架，满足各环境使用 | NA | NA | 未解决 |
+| embeded logging的buffer大小，backend选择，裁剪配置等配置应该由json文件进行配置 | NA | NA | 未解决 |
 
 
 
