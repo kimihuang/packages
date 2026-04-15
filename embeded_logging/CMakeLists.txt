@@ -67,8 +67,24 @@ target_include_directories(elog_test PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
 
 add_test(NAME elog_test COMMAND elog_test)
 
-# ===== 集成测试 (fork elogd + sendto + reader) =====
-add_executable(elog_integration_test test/test_integration.c src/elog_event.c daemon/elogd_client.c)
-target_include_directories(elog_integration_test PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
+# ===== 集成测试 (fork elogd + elog API + reader) =====
+# 直接编译所有 elog 源文件 (避免 libelog.a 符号冲突)
+add_executable(elog_integration_test
+    test/test_integration.c
+    src/elog.c
+    src/elog_filter.c
+    src/elog_format.c
+    src/elog_stats.c
+    src/elog_prune.c
+    src/elog_event.c
+    src/elog_buf_ring.c
+    src/elog_transport_stdout.c
+    src/elog_transport_file.c
+    src/elog_port_linux.c
+    src/elog_reader.c
+    daemon/elogd_client.c)
+target_include_directories(elog_integration_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/inc
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/daemon)
 target_compile_definitions(elog_integration_test PRIVATE ELOG_EVENT_HAS_DAEMON)
-target_link_libraries(elog_integration_test PRIVATE elog)

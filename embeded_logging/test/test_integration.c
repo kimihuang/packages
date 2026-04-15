@@ -2,11 +2,19 @@
  * @file test_integration.c
  * @brief 系统级端到端集成测试
  *
- * 测试流程: fork elogd → app 用 sendto 写日志 → reader socket 读取 → 验证
+ * 测试流程: fork elogd → 通过 elog 公共 API 写日志 → reader socket 读取 → 验证
+ *
+ * 覆盖的 elog.h 接口:
+ *   ELOG_V, ELOG_D, ELOG_I, ELOG_W, ELOG_E, ELOG_F (MAIN buffer, 6 个级别宏)
+ *   ELOG_RADIO_I/W/E, ELOG_EVENTS_I/W/E, ELOG_SYSTEM_I/W/E,
+ *   ELOG_CRASH_E, ELOG_KERNEL_W (编译期级别过滤)
+ *   elog_write_ex() (任意 log_id 写入)
+ *   elogd_client_send_binary() (二进制安全发送)
  *
  * 注意: 所有测试共享同一个 daemon 实例, 每个测试用唯一 tag 隔离数据.
  */
 
+#include "elog.h"
 #include "elog_def.h"
 #include "elogd.h"
 #include <stdio.h>
@@ -95,36 +103,39 @@ static void stop_elogd(void) {
     rmdir(s_tmp_dir);
 }
 
-/* ===== 直接构造 datagram 并发送 ===== */
+/* ===== 通过 elog 公共 API 发送日志 ===== */
 
-static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level);
-
-static int send_log(const char* tag, const char* msg, uint8_t level) {
-    return send_log_ex(ELOG_ID_MAIN, tag, msg, level);
+/**
+ * 自定义 logger: 绕过本地 buffer 和 stdout transport, 直接发送到 daemon.
+ * 这样既避免 stdout 噪声, 也不受 elog filter 级别限制.
+ */
+static void daemon_logger(const elog_msg_header_t* hdr,
+                           const char* tag, const char* msg) {
+    elogd_client_send(hdr, tag, msg);
 }
 
-/* 指定 log_id 发送日志 */
-static int send_log_ex(uint8_t log_id, const char* tag, const char* msg, uint8_t level) {
-    elog_msg_header_t hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.log_id = log_id;
-    hdr.level = level;
-    hdr.tag_len = (uint16_t)(tag ? strlen(tag) : 0);
-    hdr.msg_len = (uint16_t)(msg ? strlen(msg) : 0);
+/* 子进程初始化 (fork 后需要重新 init) */
+static void child_elog_init(void) {
+    g_daemon_write_sock = s_write_sock;
+    g_daemon_cmd_sock    = s_cmd_sock;
+    g_daemon_reader_sock = s_reader_sock;
+    elog_init();
+    elog_set_logger(daemon_logger);
+    elogd_client_init();
+}
 
-    uint8_t buf[sizeof(elog_msg_header_t) + 512];
-    memcpy(buf, &hdr, sizeof(hdr));
-    if (hdr.tag_len > 0) memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
-    if (hdr.msg_len > 0) memcpy(buf + sizeof(hdr) + hdr.tag_len, msg, hdr.msg_len);
-
-    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) return -1;
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    strncpy(addr.sun_path, s_write_sock, sizeof(addr.sun_path) - 1);
-    ssize_t sent = sendto(fd, buf, sizeof(hdr) + hdr.tag_len + hdr.msg_len,
-                           0, (struct sockaddr*)&addr, sizeof(addr));
-    close(fd);
-    return (sent > 0) ? 0 : -1;
+/* 用指定级别宏发送 (覆盖 ELOG_V/D/I/W/E/F 全部 6 个) */
+static int send_log(const char* tag, const char* msg, uint8_t level) {
+    switch (level) {
+    case ELOG_LEVEL_VERBOSE: ELOG_V(tag, "%s", msg); break;
+    case ELOG_LEVEL_DEBUG:   ELOG_D(tag, "%s", msg); break;
+    case ELOG_LEVEL_INFO:    ELOG_I(tag, "%s", msg); break;
+    case ELOG_LEVEL_WARN:    ELOG_W(tag, "%s", msg); break;
+    case ELOG_LEVEL_ERROR:   ELOG_E(tag, "%s", msg); break;
+    case ELOG_LEVEL_FATAL:   ELOG_F(tag, "%s", msg); break;
+    default: ELOG_I(tag, "%s", msg); break;
+    }
+    return 0;
 }
 
 /* ===== Reader socket ===== */
@@ -314,9 +325,9 @@ static void test_e2e_multi_buffer(void) {
     printf("  test_e2e_multi_buffer...\n");
 
     /* 向不同 buffer 写入, 用唯一 tag */
-    send_log_ex(ELOG_ID_MAIN, "mb_main", "hello_main", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "mb_radio", "hello_radio", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_SYSTEM, "mb_system", "hello_system", ELOG_LEVEL_INFO);
+    ELOG_I("mb_main", "%s", "hello_main");
+    ELOG_RADIO_I("mb_radio", "hello_radio");
+    ELOG_SYSTEM_I("mb_system", "hello_system");
     usleep(200000);
 
     /* 各自读到自己的 */
@@ -338,9 +349,9 @@ static void test_e2e_log_mask(void) {
     printf("  test_e2e_log_mask...\n");
 
     /* 向 3 个 buffer 写入 */
-    send_log_ex(ELOG_ID_MAIN, "lm_main", "m", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "lm_radio", "r", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_CRASH, "lm_crash", "c", ELOG_LEVEL_INFO);
+    ELOG_I("lm_main", "%s", "m");
+    ELOG_RADIO_I("lm_radio", "r");
+    ELOG_CRASH_I("lm_crash", "c");
     usleep(200000);
 
     /* 只订阅 RADIO, 不应收到 MAIN 或 CRASH */
@@ -353,12 +364,32 @@ static void test_e2e_log_mask(void) {
     T_OK("e2e log mask");
 }
 
+static void test_e2e_events_kernel(void) {
+    printf("  test_e2e_events_kernel...\n");
+
+    ELOG_EVENTS_I("evt", "event_data=%d", 42);
+    ELOG_KERNEL_W("kern", "oops=%s", "null_ptr");
+    usleep(200000);
+
+    log_entry_t e_events[10], e_kernel[10];
+    int n1 = reader_read_by_tag_mask("evt", (1 << ELOG_ID_EVENTS), e_events, 10);
+    int n2 = reader_read_by_tag_mask("kern", (1 << ELOG_ID_KERNEL), e_kernel, 10);
+
+    T_ASSERT(n1 >= 1, "events entries found");
+    T_ASSERT(e_events[0].hdr.log_id == ELOG_ID_EVENTS, "log_id is EVENTS");
+    T_ASSERT(strcmp(e_events[0].msg, "event_data=42") == 0, "events msg correct");
+    T_ASSERT(n2 >= 1, "kernel entries found");
+    T_ASSERT(e_kernel[0].hdr.log_id == ELOG_ID_KERNEL, "log_id is KERNEL");
+    T_ASSERT(strcmp(e_kernel[0].msg, "oops=null_ptr") == 0, "kernel msg correct");
+    T_OK("e2e events + kernel");
+}
+
 static void test_e2e_buffer_stats(void) {
     printf("  test_e2e_buffer_stats...\n");
 
     /* 向 3 个 buffer 各写一条 */
-    send_log_ex(ELOG_ID_MAIN, "bs_main", "x", ELOG_LEVEL_INFO);
-    send_log_ex(ELOG_ID_RADIO, "bs_radio", "y", ELOG_LEVEL_INFO);
+    ELOG_I("bs_main", "%s", "x");
+    ELOG_RADIO_I("bs_radio", "y");
     usleep(200000);
 
     /* stats 命令应返回多行, 每行一个 buffer */
@@ -419,6 +450,7 @@ static void test_concurrent_writers(void) {
         if (pid < 0) { T_ASSERT(0, "fork"); return; }
         if (pid == 0) {
             /* 子进程: 快速写入 */
+            child_elog_init();
             for (int i = 0; i < PER_PROC; i++) {
                 char msg[32];
                 snprintf(msg, sizeof(msg), "p%d_%d", p, i);
@@ -448,9 +480,9 @@ static void test_concurrent_readers(void) {
     for (int i = 0; i < 20; i++) {
         char msg[32];
         snprintf(msg, sizeof(msg), "r%d", i);
-        send_log_ex(ELOG_ID_MAIN, "cr", msg, ELOG_LEVEL_INFO);
+        ELOG_I("cr", "%s", msg);
         snprintf(msg, sizeof(msg), "s%d", i);
-        send_log_ex(ELOG_ID_SYSTEM, "cr_sys", msg, ELOG_LEVEL_INFO);
+        ELOG_SYSTEM_I("cr_sys", "%s", msg);
     }
     usleep(200000);
 
@@ -586,27 +618,30 @@ static void test_concurrent_multi_buffer(void) {
     /* 3 个子进程各写一个 buffer */
     pid_t p_main = fork();
     if (p_main == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "m%d", i);
-            send_log_ex(ELOG_ID_MAIN, "cmb_m", msg, ELOG_LEVEL_INFO);
+            ELOG_I("cmb_m", "%s", msg);
         }
         _exit(0);
     }
 
     pid_t p_radio = fork();
     if (p_radio == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "r%d", i);
-            send_log_ex(ELOG_ID_RADIO, "cmb_r", msg, ELOG_LEVEL_INFO);
+            ELOG_RADIO_I("cmb_r", "%s", msg);
         }
         _exit(0);
     }
 
     pid_t p_crash = fork();
     if (p_crash == 0) {
+        child_elog_init();
         for (int i = 0; i < PER_BUF; i++) {
             char msg[32]; snprintf(msg, sizeof(msg), "c%d", i);
-            send_log_ex(ELOG_ID_CRASH, "cmb_c", msg, ELOG_LEVEL_ERROR);
+            ELOG_CRASH_E("cmb_c", "%s", msg);
         }
         _exit(0);
     }
@@ -669,20 +704,9 @@ static void test_e2e_binary_event(void) {
     hdr.tag_len = (uint16_t)strlen(tag);
     hdr.msg_len = (uint16_t)data_len;
 
-    uint8_t buf[sizeof(elog_msg_header_t) + 256];
-    memcpy(buf, &hdr, sizeof(hdr));
-    memcpy(buf + sizeof(hdr), tag, hdr.tag_len);
-    memcpy(buf + sizeof(hdr) + hdr.tag_len, event_data, data_len);
-    size_t total = sizeof(hdr) + hdr.tag_len + hdr.msg_len;
-
-    /* 发送 */
-    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    T_ASSERT(fd >= 0, "socket");
-    struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    strncpy(addr.sun_path, s_write_sock, sizeof(addr.sun_path) - 1);
-    ssize_t sent = sendto(fd, buf, total, 0, (struct sockaddr*)&addr, sizeof(addr));
-    close(fd);
-    T_ASSERT(sent > 0, "send binary event");
+    /* 通过 elogd_client API 发送 (binary-safe) */
+    int ret = elogd_client_send_binary(&hdr, tag, event_data, hdr.msg_len);
+    T_ASSERT(ret == ELOG_OK, "send binary event");
 
     usleep(200000);
 
@@ -716,6 +740,14 @@ int main(void) {
     }
     printf("  elogd started (pid=%d)\n", (int)s_elogd_pid);
 
+    /* daemon 就绪后初始化 elog, 设置自定义 logger 直接发到 daemon */
+    g_daemon_write_sock = s_write_sock;
+    g_daemon_cmd_sock    = s_cmd_sock;
+    g_daemon_reader_sock = s_reader_sock;
+    elog_init();
+    elog_set_logger(daemon_logger);
+    elogd_client_init();
+
     test_e2e_basic();
     test_e2e_level_filter();
     test_e2e_header_fields();
@@ -723,6 +755,7 @@ int main(void) {
     test_e2e_cmd_stats();
     test_e2e_multi_buffer();
     test_e2e_log_mask();
+    test_e2e_events_kernel();
     test_e2e_buffer_stats();
     test_concurrent_writers();
     test_concurrent_readers();
@@ -732,6 +765,7 @@ int main(void) {
     test_e2e_binary_event();
 
     stop_elogd();
+    elog_deinit();
 
     printf("  Results: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

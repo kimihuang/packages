@@ -5,8 +5,9 @@
  * 使用示例:
  *   elog_init();
  *   elog_set_level(ELOG_LEVEL_INFO);
- *   elog_info("sensor", "temperature=%d", 25);
- *   ELOG_I("sensor", "status=OK");   // 编译期过滤版本
+ *   ELOG_I("sensor", "temperature=%d", 25);       // MAIN buffer
+ *   ELOG_RADIO_W("rf", "rssi=%d", -80);            // RADIO buffer
+ *   ELOG_CRASH_E("panic", "fatal error");          // CRASH buffer
  *   elog_deinit();
  */
 
@@ -71,6 +72,14 @@ void elog_write(elog_level_t level, const char* tag, const char* fmt, ...)
     __attribute__((format(printf, 3, 4)));
 
 /**
+ * 写入日志到指定 buffer
+ * @param log_id  目标 buffer ID (ELOG_ID_MAIN, ELOG_ID_RADIO, ...)
+ */
+void elog_write_ex(elog_id_t log_id, elog_level_t level,
+                   const char* tag, const char* fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+
+/**
  * 写入日志 (va_list 版本)
  */
 void elog_vwrite(elog_level_t level, const char* tag, const char* fmt, va_list ap);
@@ -115,6 +124,56 @@ void elog_fatal(const char* tag, const char* fmt, ...)
 #define ELOG_F(tag, fmt, ...) \
     do { if (ELOG_LEVEL_FATAL >= ELOG_LEVEL_DEFAULT) \
         elog_fatal(tag, fmt, ##__VA_ARGS__); } while(0)
+
+/* ===== Buffer 指定宏 (编译期级别过滤) ===== */
+
+/*
+ * 辅助宏: 编译期级别过滤 + 指定 log_id
+ * 使用: ELOG_RADIO_I("tag", "msg=%d", 42)
+ */
+#define _ELOG_BUF(LOG_ID, LEVEL, tag, fmt, ...) \
+    do { if (LEVEL >= ELOG_LEVEL_DEFAULT) \
+        elog_write_ex(LOG_ID, LEVEL, tag, fmt, ##__VA_ARGS__); } while(0)
+
+/* --- RADIO buffer --- */
+#define ELOG_RADIO_V(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_VERBOSE, tag, fmt, ##__VA_ARGS__)
+#define ELOG_RADIO_D(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_DEBUG,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_RADIO_I(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_INFO,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_RADIO_W(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_WARN,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_RADIO_E(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_ERROR,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_RADIO_F(tag, fmt, ...) _ELOG_BUF(ELOG_ID_RADIO, ELOG_LEVEL_FATAL,   tag, fmt, ##__VA_ARGS__)
+
+/* --- EVENTS buffer --- */
+#define ELOG_EVENTS_V(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_VERBOSE, tag, fmt, ##__VA_ARGS__)
+#define ELOG_EVENTS_D(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_DEBUG,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_EVENTS_I(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_INFO,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_EVENTS_W(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_WARN,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_EVENTS_E(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_ERROR,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_EVENTS_F(tag, fmt, ...) _ELOG_BUF(ELOG_ID_EVENTS, ELOG_LEVEL_FATAL,   tag, fmt, ##__VA_ARGS__)
+
+/* --- SYSTEM buffer --- */
+#define ELOG_SYSTEM_V(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_VERBOSE, tag, fmt, ##__VA_ARGS__)
+#define ELOG_SYSTEM_D(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_DEBUG,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_SYSTEM_I(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_INFO,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_SYSTEM_W(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_WARN,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_SYSTEM_E(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_ERROR,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_SYSTEM_F(tag, fmt, ...) _ELOG_BUF(ELOG_ID_SYSTEM, ELOG_LEVEL_FATAL,   tag, fmt, ##__VA_ARGS__)
+
+/* --- CRASH buffer --- */
+#define ELOG_CRASH_V(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_VERBOSE, tag, fmt, ##__VA_ARGS__)
+#define ELOG_CRASH_D(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_DEBUG,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_CRASH_I(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_INFO,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_CRASH_W(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_WARN,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_CRASH_E(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_ERROR,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_CRASH_F(tag, fmt, ...) _ELOG_BUF(ELOG_ID_CRASH, ELOG_LEVEL_FATAL,   tag, fmt, ##__VA_ARGS__)
+
+/* --- KERNEL buffer --- */
+#define ELOG_KERNEL_V(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_VERBOSE, tag, fmt, ##__VA_ARGS__)
+#define ELOG_KERNEL_D(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_DEBUG,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_KERNEL_I(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_INFO,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_KERNEL_W(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_WARN,    tag, fmt, ##__VA_ARGS__)
+#define ELOG_KERNEL_E(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_ERROR,   tag, fmt, ##__VA_ARGS__)
+#define ELOG_KERNEL_F(tag, fmt, ...) _ELOG_BUF(ELOG_ID_KERNEL, ELOG_LEVEL_FATAL,   tag, fmt, ##__VA_ARGS__)
 
 /* ===== ISR 安全日志 ===== */
 
