@@ -9,3 +9,4 @@
 *.patch
 *.gdb
 **/objects/
+build/

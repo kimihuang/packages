@@ -43,6 +43,8 @@ Execute `./manage -s` or `.scripts/setup` to install all the dependencies.
 
 ## Quick Demo
 
+### Using Make (traditional)
+
 Following is a run of example in `examples/emulation/riscv-64`
 ```shell
 cd examples/emulation/riscv-64
@@ -50,6 +52,24 @@ make
 make run
 ```
 ![Qemu Demo](docs/images/demo.gif)
+
+### Using CMake
+
+CMake build is also supported for examples that have a `CMakeLists.txt`. The CMake build system produces identical output files as the Makefile build.
+
+```shell
+cmake -B build/armv8A-64 -S examples/emulation/armv8A-64
+cmake --build build/armv8A-64
+```
+
+The build outputs (`shell.elf`, `shell.bin`, `shell.elf.map`, `shell.elf.lst`) are placed in the build directory. To run in QEMU:
+```shell
+qemu-system-aarch64 -M virt,secure=on,virtualization=on \
+    -cpu cortex-a72 -nographic \
+    -kernel build/armv8A-64/shell.elf
+```
+
+For more details, see [shell/cmake/README.md](shell/cmake/README.md).
 
 If you haven't done the `Quick Setup` as noted above, you'll need to install following utilities:
 
@@ -88,6 +108,7 @@ You should see similar output as in above visual.
 |[Platform initialization and uart driver](docs/02-platform_init-and-uart-driver.md)|Details the implementation of the `platform_init()` and the relation to the uart driver.|
 |[Uart driver](docs/03-uart-driver.md)| Describes implementation and constraint on the uart driver.|
 |[User Linker Scripts](docs/04-user-linker-scripts.md)|Guides on how a liner script should be written if the user wants to manually set the memory layout and do the code placement.|
+|[CMake Build System](shell/cmake/README.md)|CMake build support with variable reference, template, and QEMU run instructions.|
 ## Contributing
 
 | Topic| Description |
