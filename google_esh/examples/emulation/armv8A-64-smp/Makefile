@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-TOOLCHAIN_PREFIX = aarch64-linux-gnu-
+TOOLCHAIN_PREFIX = aarch64-none-linux-gnu-
 OPTIMIZATION     = g
 STARTUP          = aarch64-multicore
 
