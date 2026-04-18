@@ -15,7 +15,7 @@ targets:
         prompt: '[#\$] '
         login_prompt: ' login: '
         username: 'root'
-        await_login_timeout: 30
+        await_login_timeout: 3
         login_timeout: 120
       ShellStrategy: {}
 

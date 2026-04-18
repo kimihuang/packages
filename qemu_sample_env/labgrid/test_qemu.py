@@ -1,5 +1,4 @@
 import pytest
-import time
 import select
 from labgrid.driver.qemudriver import QEMUDriver
 from labgrid.driver.shelldriver import ShellDriver
@@ -15,18 +14,12 @@ def qemu_env(target):
     target.activate(qemu)
     qemu.on()
 
-    # wait for kernel boot to reach userspace
-    time.sleep(5)
-
-    # drain boot output
+    # drain initial boot output until console is idle
     while True:
         ready, _, _ = select.select([qemu._clientsocket], [], [], 2)
         if not ready:
             break
         qemu._clientsocket.recv(4096)
-
-    # wait for init scripts to finish
-    time.sleep(10)
 
     target.activate(shell)
     shell._await_login()
