@@ -5,3 +5,4 @@ Image
 rootfs.cpio
 rootfs.ext2
 *.dtb
+__pycache__
