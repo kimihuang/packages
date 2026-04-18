@@ -19,7 +19,8 @@ qemu_sample_env/
     ├── test_monitor.py    # QMP Monitor 测试
     ├── test_system.py     # 系统信息测试（CPU、内核、内存）
     ├── test_filesystem.py # 文件系统测试
-    └── test_process.py    # 进程和服务测试
+    ├── test_process.py    # 进程和服务测试
+    └── run_report.sh      # 测试报告生成脚本
 ```
 
 ## QEMU 启动
@@ -118,3 +119,29 @@ pytest test_system.py::TestCPU::test_cpu_architecture -v --lg-env labgrid-env.ya
 | test_process.py | TestService | test_syslogd_running | 确认 syslogd 运行 |
 | test_process.py | TestService | test_cron_running | 确认 crond 运行 |
 | test_process.py | TestService | test_klogd_running | 确认 klogd 运行 |
+
+### 生成测试报告
+
+```bash
+cd labgrid
+./run_report.sh
+```
+
+生成的报告文件：
+
+```
+labgrid/report/
+├── report.html   # HTML 看板（浏览器打开）
+├── report.json   # JSON 结构化结果（CI/CD 消费）
+└── console.log   # 完整控制台输出（含 Linux 启动日志）
+```
+
+- **report.html** — 交互式看板，包含通过/失败统计、耗时、每个用例的详细日志
+- **report.json** — 机器可读的 JSON，适合 CI/CD pipeline 解析
+
+CI/CD 集成：
+
+```bash
+cd labgrid && ./run_report.sh
+echo $?  # 0=全部通过，非0=有失败
+```

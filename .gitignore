@@ -6,3 +6,4 @@ rootfs.cpio
 rootfs.ext2
 *.dtb
 __pycache__
+report
