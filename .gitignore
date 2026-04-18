@@ -1,3 +1,7 @@
 embeded_logging/build/
 ramparser-LE.PRODUCT.2.6.r1-02600-QCS610.0/linux-ramdump-parser-v2/output/
 ramparser-LE.PRODUCT.2.6.r1-02600-QCS610.0/linux-ramdump-parser-v2/binary/
+Image
+rootfs.cpio
+rootfs.ext2
+*.dtb
