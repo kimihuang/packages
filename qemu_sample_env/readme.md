@@ -62,7 +62,7 @@ pip install labgrid pytest
 
 ```bash
 cd labgrid
-pytest test_qemu.py -v --lg-env labgrid-env.yaml -s
+pytest  -v --lg-env labgrid-env.yaml -s
 ```
 
 ### 测试用例
