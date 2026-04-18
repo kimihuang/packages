@@ -14,9 +14,12 @@ qemu_sample_env/
 ├── unpack_rootfs.sh       # 解包 rootfs.cpio
 ├── pack_rootfs.sh         # 打包 rootfs.cpio（fakeroot 保持 root 权限）
 └── labgrid/               # labgrid 自动化测试
+    ├── conftest.py        # 共享 fixture（QEMU 启动/关闭，console 日志）
     ├── labgrid-env.yaml   # labgrid 环境配置
-    ├── test_qemu.py       # pytest 测试用例
-    └── readme.md          # 本文件
+    ├── test_monitor.py    # QMP Monitor 测试
+    ├── test_system.py     # 系统信息测试（CPU、内核、内存）
+    ├── test_filesystem.py # 文件系统测试
+    └── test_process.py    # 进程和服务测试
 ```
 
 ## QEMU 启动
@@ -58,17 +61,60 @@ echo "info version" | socat - UNIX-CONNECT:qemu-monitor.sock
 pip install labgrid pytest
 ```
 
-### 运行测试
+### 运行全部测试
 
 ```bash
 cd labgrid
-pytest  -v --lg-env labgrid-env.yaml -s
+pytest -v --lg-env labgrid-env.yaml -s
+```
+
+### 查看完整 Linux 启动日志
+
+```bash
+cd labgrid
+# 日志输出到文件
+pytest -v --lg-env labgrid-env.yaml -s --log-cli-level=INFO 2>&1 | tee test.log
+
+# 直接显示日志
+pytest -v --lg-env labgrid-env.yaml -s --log-cli-level=INFO 
+```
+
+`labgrid.console` logger 会输出 QEMU console 的全部内容（内核启动日志、init 脚本输出等）。
+
+### 运行指定测试文件
+
+```bash
+pytest test_monitor.py -v --lg-env labgrid-env.yaml -s
+pytest test_system.py -v --lg-env labgrid-env.yaml -s
+```
+
+### 运行指定测试用例
+
+```bash
+pytest test_system.py::TestCPU::test_cpu_architecture -v --lg-env labgrid-env.yaml -s
 ```
 
 ### 测试用例
 
-| 测试 | 说明 |
-|------|------|
-| test_qemu_monitor_version | 通过 QMP monitor 查询 QEMU 版本 |
-| test_cpu_info | 查看 CPU 信息（/proc/cpuinfo） |
-| test_kernel_version | 查看内核版本（uname -a） |
+| 文件 | 类 | 测试 | 说明 |
+|------|----|------|------|
+| test_monitor.py | TestQEMUMonitor | test_query_version | 查询 QEMU 版本 |
+| test_monitor.py | TestQEMUMonitor | test_query_status | 查询 VM 运行状态 |
+| test_monitor.py | TestQEMUMonitor | test_query_cpus | 查询 CPU 拓扑 |
+| test_system.py | TestCPU | test_cpu_info | 查看 CPU 信息 |
+| test_system.py | TestCPU | test_cpu_architecture | 确认 aarch64 架构 |
+| test_system.py | TestCPU | test_cpu_online_count | 确认 CPU 在线数量 |
+| test_system.py | TestKernel | test_kernel_version | 查看内核版本 |
+| test_system.py | TestKernel | test_kernel_release | 确认内核版本号格式 |
+| test_system.py | TestMemory | test_meminfo | 查看内存信息 |
+| test_system.py | TestMemory | test_total_memory | 确认总内存大于 0 |
+| test_filesystem.py | TestFilesystem | test_root_mount | 确认根文件系统已挂载 |
+| test_filesystem.py | TestFilesystem | test_root_writable | 确认根文件系统可写 |
+| test_filesystem.py | TestFilesystem | test_proc_mounts | 查看 /proc/mounts |
+| test_filesystem.py | TestFilesystem | test_tmpfs_available | 确认 /tmp 可读写 |
+| test_process.py | TestProcess | test_init_process | 确认 init 进程存在 |
+| test_process.py | TestProcess | test_process_count | 查看进程数量 |
+| test_process.py | TestProcess | test_sh_available | 确认 sh 可用 |
+| test_process.py | TestService | test_syslogd_running | 确认 syslogd 运行 |
+| test_process.py | TestService | test_cron_running | 确认 crond 运行 |
+| test_process.py | TestService | test_klogd_running | 确认 klogd 运行 |

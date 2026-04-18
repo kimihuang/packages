@@ -1,7 +1,10 @@
 import pytest
 import select
+import logging
 from labgrid.driver.qemudriver import QEMUDriver
 from labgrid.driver.shelldriver import ShellDriver
+
+logger = logging.getLogger("labgrid.console")
 
 
 @pytest.fixture(scope="session")
@@ -13,12 +16,15 @@ def qemu_env(target):
     target.activate(qemu)
     qemu.on()
 
-    # drain initial boot output until console is idle
+    # drain initial boot output, 同时记录到 logger
     while True:
         ready, _, _ = select.select([qemu._clientsocket], [], [], 2)
         if not ready:
             break
-        qemu._clientsocket.recv(4096)
+        data = qemu._clientsocket.recv(4096)
+        text = data.decode("utf-8", errors="replace")
+        for line in text.splitlines():
+            logger.info(line)
 
     target.activate(shell)
     shell._await_login()
