@@ -59,9 +59,29 @@ static int start_elogd(void) {
     make_tmp_paths();
     mkdir(s_tmp_dir, 0755);
 
-    const char* elogd_path =
-        "/home/lion/workdir/sourcecode/quantum_main/src/packages/embeded_logging/build/elogd";
-    if (access(elogd_path, X_OK) != 0) return -1;
+    /* 优先 target 安装路径, 其次通过 /proc/self/exe 定位同目录 elogd */
+    char self_dir[256] = {0};
+    ssize_t len = readlink("/proc/self/exe", self_dir, sizeof(self_dir) - 1);
+    if (len > 0) {
+        char* slash = strrchr(self_dir, '/');
+        if (slash) *slash = '\0';
+    }
+    char self_elogd[280];
+    snprintf(self_elogd, sizeof(self_elogd), "%s/elogd", self_dir);
+
+    const char* elogd_path = NULL;
+    const char* candidates[] = {
+        "/usr/sbin/elogd",
+        self_elogd,
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        if (access(candidates[i], X_OK) == 0) {
+            elogd_path = candidates[i];
+            break;
+        }
+    }
+    if (!elogd_path) return -1;
 
     pid_t pid = fork();
     if (pid < 0) return -1;
