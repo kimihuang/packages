@@ -20,6 +20,8 @@ qemu_sample_env/
     ├── test_system.py     # 系统信息测试（CPU、内核、内存）
     ├── test_filesystem.py # 文件系统测试
     ├── test_process.py    # 进程和服务测试
+    ├── test_sort_app.py   # sort_app 排序应用测试
+    ├── test_embeded_logging.py # elog 日志框架测试
     └── run_report.sh      # 测试报告生成脚本
 ```
 
@@ -119,6 +121,54 @@ pytest test_system.py::TestCPU::test_cpu_architecture -v --lg-env labgrid-env.ya
 | test_process.py | TestService | test_syslogd_running | 确认 syslogd 运行 |
 | test_process.py | TestService | test_cron_running | 确认 crond 运行 |
 | test_process.py | TestService | test_klogd_running | 确认 klogd 运行 |
+
+### sort_app 排序应用测试
+
+sort_app 是包含 7 种排序算法（bubble/selection/insertion/shell/merge/quick/heap）的命令行工具，已集成到 rootfs。
+
+| 文件 | 类 | 测试 | 说明 |
+|------|----|------|------|
+| test_sort_app.py | TestSortAppBasic | test_help | 帮助信息 |
+| test_sort_app.py | TestSortAppBasic | test_list_algorithms | 列出全部 7 种算法 |
+| test_sort_app.py | TestSortAppBasic | test_single_sort_quick | quick sort 基本排序 |
+| test_sort_app.py | TestSortAppBasic | test_single_sort_bubble | bubble sort 基本排序 |
+| test_sort_app.py | TestSortAppBasic | test_single_sort_merge | merge sort 基本排序 |
+| test_sort_app.py | TestSortAppAlgorithms | test_algorithm_sorted[7种] | 每种算法排序后验证升序 |
+| test_sort_app.py | TestSortAppEdgeCases | test_single_element | 1 个元素 |
+| test_sort_app.py | TestSortAppEdgeCases | test_already_sorted | 已排序数组 |
+| test_sort_app.py | TestSortAppEdgeCases | test_large_array | 50000 元素 |
+| test_sort_app.py | TestSortAppEdgeCases | test_benchmark_all | benchmark 全部算法 |
+
+```bash
+pytest test_sort_app.py -v --lg-env labgrid-env.yaml -s
+```
+
+### embeded_logging 测试
+
+elog 是类 Android logd 的嵌入式日志框架，包含 elogd 守护进程、elogcat 工具和 elog_test/elog_integration_test 测试套件。
+
+| 文件 | 类 | 测试 | 说明 |
+|------|----|------|------|
+| test_embeded_logging.py | TestElogdDaemon | test_elogd_running | elogd 进程运行 |
+| test_embeded_logging.py | TestElogdDaemon | test_elogd_sockets_exist | socket 文件存在 |
+| test_embeded_logging.py | TestElogdDaemon | test_log_files_exist | 日志文件已生成 |
+| test_embeded_logging.py | TestElogcatBasic | test_elogcat_help | 帮助信息 |
+| test_embeded_logging.py | TestElogcatBasic | test_elogcat_clear | 清空 buffer |
+| test_embeded_logging.py | TestElogcatBuffer | test_get_buffer_size | 查看 buffer 统计 |
+| test_embeded_logging.py | TestElogcatBuffer | test_buffer_main_capacity | main 容量 256KB |
+| test_embeded_logging.py | TestElogcatBuffer | test_six_buffers | 6 个 buffer 存在 |
+| test_embeded_logging.py | TestElogTest | test_elog_test_exists | elog_test 存在 |
+| test_embeded_logging.py | TestElogTest | test_elog_test_all_passed | 9 个单元测试套件通过 |
+| test_embeded_logging.py | TestElogTest | test_elog_test_nine_suites | 验证 9 套件 |
+| test_embeded_logging.py | TestElogIntegrationTest | test_integration_all_passed | 15 个集成测试通过 |
+| test_embeded_logging.py | TestElogIntegrationTest | test_integration_e2e_cases | 10 个 e2e 端到端用例 |
+| test_embeded_logging.py | TestElogIntegrationTest | test_integration_concurrent_cases | 5 个并发用例 |
+
+集成测试会自动停掉系统 elogd，运行自带的 `elog_integration_test`（fork 独立 elogd），测试后重启系统 elogd。
+
+```bash
+pytest test_embeded_logging.py -v --lg-env labgrid-env.yaml -s
+```
 
 ### 生成测试报告
 
