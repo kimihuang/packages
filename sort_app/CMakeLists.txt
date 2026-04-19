@@ -20,9 +20,16 @@ set(SORT_SOURCES
     src/sort_registry.c
 )
 
-# 排序算法静态库，便于测试和主程序复用
-add_library(sort_lib STATIC ${SORT_SOURCES})
+# 排序算法动态库
+add_library(sort_lib SHARED ${SORT_SOURCES})
 target_include_directories(sort_lib PUBLIC include)
+target_compile_definitions(sort_lib PRIVATE SORT_SHARED)
+set_target_properties(sort_lib PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+# 设置 so 版本号
+set_target_properties(sort_lib PROPERTIES VERSION 1.0.0 SOVERSION 1)
 
 # 主程序
 add_executable(sort_app src/main.c)

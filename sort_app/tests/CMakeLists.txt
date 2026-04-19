@@ -13,6 +13,10 @@ add_executable(sort_tests
     test_sort.cpp
 )
 target_link_libraries(sort_tests PRIVATE sort_lib GTest::gtest_main)
+set_target_properties(sort_tests PROPERTIES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}"
+    INSTALL_RPATH "$ORIGIN/../.."
+)
 add_test(NAME sort_tests COMMAND sort_tests)
 
 # 性能基准测试
@@ -20,4 +24,8 @@ add_executable(sort_bench
     test_bench.cpp
 )
 target_link_libraries(sort_bench PRIVATE sort_lib GTest::gtest_main)
+set_target_properties(sort_bench PROPERTIES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}"
+    INSTALL_RPATH "$ORIGIN/../.."
+)
 add_test(NAME sort_bench COMMAND sort_bench)

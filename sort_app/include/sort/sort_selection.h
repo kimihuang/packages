@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-void sort_selection(int *arr, size_t n);
+SORT_API void sort_selection(int *arr, size_t n);
 
 #ifdef __cplusplus
 }

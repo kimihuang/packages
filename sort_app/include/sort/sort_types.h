@@ -3,6 +3,21 @@
 
 #include <stddef.h>
 
+/* 动态库导出宏 */
+#ifdef SORT_SHARED
+    #ifdef _WIN32
+        #define SORT_API __declspec(dllexport)
+    #else
+        #define SORT_API __attribute__((visibility("default")))
+    #endif
+#else
+    #ifdef _WIN32
+        #define SORT_API __declspec(dllimport)
+    #else
+        #define SORT_API
+    #endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
