@@ -107,9 +107,13 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-> 完整分层架构图: [`embedded_logging_arch.mmd`](embedded_logging_arch.mmd)
->
-> 数据流图: [`embedded_logging_dataflow.mmd`](embedded_logging_dataflow.mmd)
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_arch.mmd"
+```
+
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_dataflow.mmd"
+```
 
 ---
 
@@ -658,7 +662,9 @@ elogd main():
 
 ## 11. 日志写入流程
 
-> 详见 [`embedded_logging_write_seq.mmd`](embedded_logging_write_seq.mmd)
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_write_seq.mmd"
+```
 
 ```
 1. App: ELOG_I("sensor", "temp=%d", value)
@@ -712,7 +718,9 @@ int elog_write_isr(uint8_t level, const char* tag, const char* msg, uint16_t msg
 
 ## 12. 日志读取流程
 
-> 详见 [`embedded_logging_read_seq.mmd`](embedded_logging_read_seq.mmd)
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_read_seq.mmd"
+```
 
 ```
 1. elogcat: elog_reader_init(mode=TAIL, tail=100)
@@ -754,7 +762,9 @@ void elog_reader_list_notify(elog_reader_list_t* list, uint32_t log_mask);
 
 ## 13. elogd 初始化流程
 
-> 详见 [`embedded_logging_init_seq.mmd`](embedded_logging_init_seq.mmd)
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_init_seq.mmd"
+```
 
 ```
 ┌─ 创建核心组件 ──────────────────────────┐
@@ -789,7 +799,9 @@ void elog_reader_list_notify(elog_reader_list_t* list, uint32_t log_mask);
 
 ## 14. 部署方案
 
-> 详见 [`embedded_logging_deployment.mmd`](embedded_logging_deployment.mmd)
+```mermaid
+--8<-- "src/packages/embeded_logging/embedded_logging_deployment.mmd"
+```
 
 ### 14.1 方案 A: 有 MMU（嵌入式 Linux）
 
