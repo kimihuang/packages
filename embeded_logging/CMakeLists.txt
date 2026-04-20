@@ -67,6 +67,11 @@ target_include_directories(elog_test PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
 
 add_test(NAME elog_test COMMAND elog_test)
 
+# ===== 示例应用 =====
+add_executable(elog_app examples/elog_app.c)
+target_link_libraries(elog_app PRIVATE elog)
+target_include_directories(elog_app PRIVATE ${CMAKE_SOURCE_DIR}/daemon)
+
 # ===== 集成测试 (fork elogd + elog API + reader) =====
 add_executable(elog_integration_test test/test_integration.c)
 target_link_libraries(elog_integration_test PRIVATE elog)

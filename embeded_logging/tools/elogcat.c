@@ -258,7 +258,7 @@ static int run_logcat(void) {
     elog_read_request_t req;
     memset(&req, 0, sizeof(req));
     req.version = ELOG_READ_PROTOCOL_VERSION;
-    req.tail = 1;  /* 从尾部开始 */
+    req.tail = (g_cfg.dump && g_cfg.tail == 0) ? 0 : 1;  /* -d 无 -t 时从头 dump 全部 */
     req.count = (g_cfg.dump || g_cfg.tail > 0) ? (uint32_t)g_cfg.tail : 0;
     req.min_level = 0;
     req.pid_filter = g_cfg.pid_filter;
