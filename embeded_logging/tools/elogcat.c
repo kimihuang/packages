@@ -41,11 +41,21 @@ static struct {
     uint32_t log_mask;    /* -b: buffer 订阅 bitmask, 0 = 全部 */
 } g_cfg;
 
-static volatile bool g_running = true;
+static volatile sig_atomic_t g_running = 1;
 
 static void signal_handler(int sig) {
     (void)sig;
-    g_running = false;
+    g_running = 0;
+}
+
+static void setup_signals(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;  /* 不设 SA_RESTART, 让 recv() 被 SIGINT 中断后返回 EINTR */
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 }
 
 static void usage(const char* prog) {
@@ -277,14 +287,16 @@ static int run_logcat(void) {
     while (g_running) {
         ssize_t n = recv(fd, buf, sizeof(buf), 0);
         if (n <= 0) {
-            if (g_cfg.dump) break;
-            if (n == 0) break;
-            if (errno == EINTR) continue;
+            if (n == 0) break;           /* peer closed */
+            if (!g_running) break;       /* SIGINT/SIGTERM */
+            if (errno == EINTR) continue; /* 被信号中断, 重新检查 g_running */
             break;
         }
 
         print_entry(buf, (size_t)n);
         fflush(stdout);
+
+        if (!g_running) break;  /* 输出后再次检查, 防止信号在 recv 返回期间到达 */
     }
 
     close(fd);
@@ -294,8 +306,7 @@ static int run_logcat(void) {
 int main(int argc, char* argv[]) {
     parse_args(argc, argv);
 
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    setup_signals();
 
     /* cmd 操作 */
     if (g_cfg.clear) {
