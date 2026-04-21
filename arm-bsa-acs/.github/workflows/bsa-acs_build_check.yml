@@ -1,0 +1,424 @@
+name: BSA-ACS Build Check
+
+on:
+  push:
+    branches:                # trigger on push to master
+      - main
+  pull_request:              # trigger on pull requests to master
+    branches:
+      - main
+  workflow_dispatch:         # to dispatch from Github Actions
+
+jobs:
+  build_bsa_acpi:
+    name: BSA-ACS UEFI build for ACPI target
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git build-essential nasm
+
+      - name: Download edk2 and its submodules
+        run: |
+          git clone --recursive https://github.com/tianocore/edk2
+          cd edk2
+          git checkout edk2-stable202411
+          cd ..
+          git clone https://github.com/tianocore/edk2-libc edk2/edk2-libc
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          path: 'edk2/ShellPkg/Application/bsa-acs'
+
+      - name: Apply edk2 BSA patch for ACPI target
+        run: |
+          cd edk2
+          git apply ShellPkg/Application/bsa-acs/patches/edk2_bsa_acpi.patch
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+          mkdir -p /opt/cross
+          cd /opt/cross
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+
+      - name: Set up EDK2 environment and build Bsa.efi
+        run: |
+          cd edk2
+          export GCC49_AARCH64_PREFIX=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          export PACKAGES_PATH=$PWD/edk2-libc
+          source edksetup.sh
+          make -C BaseTools/Source/C
+          source ShellPkg/Application/bsa-acs/tools/scripts/acsbuild.sh
+      - name: Save Bsa.efi as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bsa_acpi_target.efi
+          path: edk2/Build/Shell/DEBUG_GCC49/AARCH64/Bsa.efi
+          if-no-files-found: error
+
+  build_drtm_acpi:
+    name: DRTM-ACS UEFI build for ACPI target
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git build-essential nasm
+
+      - name: Download edk2 and its submodules
+        run: |
+          git clone --recursive https://github.com/tianocore/edk2
+          cd edk2
+          git checkout edk2-stable202411
+          cd ..
+          git clone https://github.com/tianocore/edk2-libc edk2/edk2-libc
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          path: 'edk2/ShellPkg/Application/bsa-acs'
+
+      - name: Apply edk2 DRTM patch for ACPI target
+        run: |
+          cd edk2
+          git apply ShellPkg/Application/bsa-acs/patches/edk2_drtm.patch
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+          mkdir -p /opt/cross
+          cd /opt/cross
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+
+      - name: Set up EDK2 environment and build Drtm.efi
+        run: |
+          cd edk2
+          export GCC49_AARCH64_PREFIX=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          export PACKAGES_PATH=$PWD/edk2-libc
+          source edksetup.sh
+          make -C BaseTools/Source/C
+          source ShellPkg/Application/bsa-acs/tools/scripts/acsbuild.sh ENABLE_DRTM
+      - name: Save Drtm.efi as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Drtm_acpi_target.efi
+          path: edk2/Build/Shell/DEBUG_GCC49/AARCH64/Drtm.efi
+          if-no-files-found: error
+
+  build_mpam_acpi:
+    name: MPAM-ACS UEFI build for ACPI target
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git build-essential nasm
+
+      - name: Download edk2 and its submodules
+        run: |
+          git clone --recursive https://github.com/tianocore/edk2
+          cd edk2
+          git checkout edk2-stable202411
+          cd ..
+          git clone https://github.com/tianocore/edk2-libc edk2/edk2-libc
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          path: 'edk2/ShellPkg/Application/bsa-acs'
+
+      - name: Apply edk2 MPAM patch for ACPI target
+        run: |
+          cd edk2
+          git apply ShellPkg/Application/bsa-acs/patches/edk2_mpam.patch
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+          mkdir -p /opt/cross
+          cd /opt/cross
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+
+      - name: Set up EDK2 environment and build Mpam.efi
+        run: |
+          cd edk2
+          export GCC49_AARCH64_PREFIX=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          export PACKAGES_PATH=$PWD/edk2-libc
+          source edksetup.sh
+          make -C BaseTools/Source/C
+          source ShellPkg/Application/bsa-acs/tools/scripts/acsbuild.sh ENABLE_MPAM
+      - name: Save Mpam.efi as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mpam_acpi_target.efi
+          path: edk2/Build/Shell/DEBUG_GCC49/AARCH64/Mpam.efi
+          if-no-files-found: error
+
+  build_sbsa_acpi:
+    name: SBSA-ACS UEFI build for ACPI target
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git build-essential nasm
+
+      - name: Download edk2 and its submodules
+        run: |
+          git clone --recursive https://github.com/tianocore/edk2
+          cd edk2
+          git checkout edk2-stable202411
+          cd ..
+          git clone https://github.com/tianocore/edk2-libc edk2/edk2-libc
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          path: 'edk2/ShellPkg/Application/bsa-acs'
+
+      - name: Checkout sbsa-acs repository
+        run: |
+          cd edk2
+          git clone https://github.com/ARM-software/sbsa-acs.git ShellPkg/Application/sbsa-acs
+
+      - name: Apply edk2 sbsa patch
+        run: |
+          cd edk2
+          git apply ShellPkg/Application/sbsa-acs/patches/edk2_sbsa.patch
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+          mkdir -p /opt/cross
+          cd /opt/cross
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+
+      - name: Set up EDK2 environment and build Sbsa.efi
+        run: |
+          cd edk2
+          export GCC49_AARCH64_PREFIX=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          export PACKAGES_PATH=$PWD/edk2-libc
+          source edksetup.sh
+          make -C BaseTools/Source/C
+          source ShellPkg/Application/sbsa-acs/tools/scripts/acsbuild.sh
+          ls Build/Shell/DEBUG_GCC49/AARCH64/Sbsa.efi
+      - name: Save Sbsa.efi as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sbsa.efi
+          path: edk2/Build/Shell/DEBUG_GCC49/AARCH64/Sbsa.efi
+          if-no-files-found: error
+
+  build_dt:
+    name: BSA-ACS UEFI build for DT target
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git build-essential nasm
+
+      - name: Download edk2 and its submodules
+        run: |
+          git clone --recursive https://github.com/tianocore/edk2
+          cd edk2
+          git checkout edk2-stable202411
+          cd ..
+          git clone https://github.com/tianocore/edk2-libc edk2/edk2-libc
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          path: 'edk2/ShellPkg/Application/bsa-acs'
+
+      - name: Apply edk2 BSA patch for DT target
+        run: |
+          cd edk2
+          git apply ShellPkg/Application/bsa-acs/patches/edk2_bsa_dt.patch
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+          mkdir -p /opt/cross
+          cd /opt/cross
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+
+      - name: Set up EDK2 environment and build Bsa.efi
+        run: |
+          cd edk2
+          export GCC49_AARCH64_PREFIX=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          export PACKAGES_PATH=$PWD/edk2-libc
+          source edksetup.sh
+          make -C BaseTools/Source/C
+          source ShellPkg/Application/bsa-acs/tools/scripts/acsbuild.sh
+      - name: Save Bsa.efi as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bsa_dt_target.efi
+          path: edk2/Build/Shell/DEBUG_GCC49/AARCH64/Bsa.efi
+          if-no-files-found: error
+
+  bsa_baremetal-compilation:
+    name: BSA-ACS Baremetal CMake compilation check 
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+
+      - name: Remove build folder if present in BSA-ACS
+        run: |
+              rm -rf build
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+              mkdir -p /opt/cross
+              cd /opt/cross
+              wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-elf.tar.xz
+              tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-elf.tar.xz
+
+      - name: Compile BSA Baremetal ACS for RDN2 Platform
+        run: |
+              export CROSS_COMPILE=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
+              mkdir build
+              cd build
+              cmake ../ -G "Unix Makefiles" -DCROSS_COMPILE=$CROSS_COMPILE -DTARGET=RDN2
+              make
+
+      - name: Save Baremetel bsa.bin as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bsa_baremetal_RDN2.bin
+          path: build/output/bsa.bin
+          if-no-files-found: error
+          
+  sbsa_baremetal-compilation:
+    name: SBSA-ACS Baremetal CMake compilation 
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          repository: ARM-software/bsa-acs
+
+      - name: Git clone SBSA-ACS repository
+        run: |
+              git clone https://github.com/ARM-software/sbsa-acs.git ../sbsa-acs
+
+      - name: Remove build folder if present in SBSA-ACS
+        run: |
+              cd ../sbsa-acs
+              rm -rf build
+
+      - name: Download Arm GCC cross-compiler
+        run: |
+              mkdir -p /opt/cross
+              cd /opt/cross
+              wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-elf.tar.xz
+              tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-elf.tar.xz
+
+      - name: Compile SBSA Baremetal ACS for RDN2 Platform
+        run: |
+              cd ../sbsa-acs
+              export CROSS_COMPILE=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
+              mkdir build
+              cd build
+              cmake ../ -G "Unix Makefiles" -DCROSS_COMPILE=$CROSS_COMPILE -DTARGET=RDN2
+              make
+
+
+      - name: Save Baremetel sbsa.bin as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sbsa_baremetal_RDN2.bin
+          path: /home/runner/work/bsa-acs/sbsa-acs/build/output/sbsa.bin
+          if-no-files-found: error
+          
+
+  linux-compilation:
+    name: BSA and SBSA linux compilation
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout bsa-acs repository
+        uses: actions/checkout@v4
+        with:
+          repository: ARM-software/bsa-acs
+
+      - name: Download Arm GCC cross-compiler and Linux 6.8 and Linux ACS
+        run: |
+              cd ..
+              git clone https://github.com/torvalds/linux.git -b v6.8 linux6.8
+              git clone https://git.gitlab.arm.com/linux-arm/linux-acs.git
+              ls
+              mkdir -p /opt/cross
+              cd /opt/cross
+              wget https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+              tar -xf arm-gnu-toolchain-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+              cd -
+
+      - name: Compile Linux
+        run: |
+              cd ..
+              export GCC=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+              cd linux6.8
+              git apply ../linux-acs/kernel/src/0001-BSA-ACS-Linux-6.8.patch
+              mkdir out
+              cp arch/arm64/configs/defconfig out/.config
+              make ARCH=arm64 CROSS_COMPILE=$GCC O=out olddefconfig
+              make ARCH=arm64 CROSS_COMPILE=$GCC O=out -j $(nproc)
+              cd -
+              
+      - name: Save Linux Kernel as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Linux Kernel
+          path: /home/runner/work/bsa-acs/linux6.8/out/arch/arm64/boot/Image.gz
+          if-no-files-found: error 
+          
+      - name: Compile BSA Linux ACS module and app
+        run: |
+              cd ..
+              export CROSS_COMPILE=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+              export KERNEL_SRC=$PWD/linux6.8/out
+              mkdir linux-bsa
+              cd linux-acs/acs-drv/files
+              ./bsa_setup.sh $PWD/../../../bsa-acs
+              ./linux_bsa_acs.sh
+              cp bsa_acs.ko /home/runner/work/bsa-acs/linux-bsa/
+              cd -
+              cd bsa-acs/linux_app/bsa-acs-app
+              make
+              cp bsa /home/runner/work/bsa-acs/linux-bsa/
+    
+      - name: Save BSA kernel module and app as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BSA Kernel Module and App
+          path: /home/runner/work/bsa-acs/linux-bsa/*
+          if-no-files-found: error
+          
+      - name: Compile SBSA Linux ACS module and app
+        run: |
+              cd ..
+              git clone https://github.com/ARM-software/sbsa-acs.git
+              export CROSS_COMPILE=/opt/cross/arm-gnu-toolchain-13.2.Rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+              export KERNEL_SRC=$PWD/linux6.8/out
+              mkdir linux-sbsa
+              cd linux-acs/acs-drv/files
+              rm -r test_pool
+              rm -r val
+              ./sbsa_setup.sh $PWD/../../../bsa-acs $PWD/../../../sbsa-acs
+              ./linux_sbsa_acs.sh
+              cp sbsa_acs.ko /home/runner/work/bsa-acs/linux-sbsa/
+              cd -
+              cd sbsa-acs/linux_app/sbsa-acs-app
+              make
+              cp sbsa /home/runner/work/bsa-acs/linux-sbsa/
+
+      - name: Save SBSA kernel module and app as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SBSA Kernel Module and App
+          path: /home/runner/work/bsa-acs/linux-sbsa/*
+          if-no-files-found: error
