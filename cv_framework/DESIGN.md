@@ -20,7 +20,7 @@ graph TB
         C1[TEST_CASE - 注册用例]
         C2[TEST_MODULE - 注册模块]
         C3[TEST_GROUP - 注册组]
-        C4[SETUP / TEARDOWN - 钩子]
+        C4[PRE_TEST / POST_TEST - 钩子]
     end
 
     subgraph "测试用例层 - 2 Group x 3 Module x N Case"
@@ -50,46 +50,53 @@ graph TB
 
 ```mermaid
 classDiagram
-    class test_case {
-        +char name[64]
-        +void (*func)(void)
-        +list_head case_node
-        +int result
+    class cv_test_case {
+        +char name[CV_NAME_MAX]
+        +cv_test_func_t func
+        +cv_test_func_t pre_test
+        +cv_test_func_t post_test
+        +struct list_head case_node
+        +cv_test_result_t result
+        +int enabled
     }
 
-    class test_module {
-        +char name[64]
-        +list_head case_list
-        +list_head module_node
+    class cv_test_module {
+        +char name[CV_NAME_MAX]
+        +struct list_head case_list
+        +struct list_head module_node
         +int case_count
-        +void (*setup)(void)
-        +void (*teardown)(void)
         +int pass_count
         +int fail_count
+        +int skip_count
+        +cv_test_func_t pre_test
+        +cv_test_func_t post_test
+        +int enabled
     }
 
-    class test_group {
-        +char name[64]
-        +list_head module_list
-        +list_head group_node
+    class cv_test_group {
+        +char name[CV_NAME_MAX]
+        +struct list_head module_list
+        +struct list_head group_node
         +int module_count
-        +void (*setup)(void)
-        +void (*teardown)(void)
         +int pass_count
         +int fail_count
+        +int skip_count
+        +cv_test_func_t pre_test
+        +cv_test_func_t post_test
+        +int enabled
     }
 
-    class test_framework {
-        +list_head group_list
+    class cv_test_framework {
+        +struct list_head group_list
         +int group_count
         +int total_pass
         +int total_fail
         +int total_skip
     }
 
-    test_framework "1" *-- "*" test_group : contains
-    test_group "1" *-- "*" test_module : contains
-    test_module "1" *-- "*" test_case : contains
+    cv_test_framework "1" *-- "*" cv_test_group : contains
+    cv_test_group "1" *-- "*" cv_test_module : contains
+    cv_test_module "1" *-- "*" cv_test_case : contains
 ```
 
 ### 2.2 双向链表节点布局
@@ -166,78 +173,174 @@ cv_framework/
 ### 4.2 `cv_test.h` — 核心数据结构与 API
 
 ```c
-/* 测试用例 — 最小单位 */
-typedef void (*test_func_t)(void);
+#include "cv_list.h"
+#include <stddef.h>
 
+/* ---- 类型与常量 ---- */
+
+#define CV_NAME_MAX    64
+#define CV_ERR_MSG_MAX 256
+
+typedef void (*cv_test_func_t)(void);
+
+typedef enum {
+    CV_RESULT_UNINIT = -1,   /* 未执行 */
+    CV_RESULT_PASS   = 0,    /* 通过   */
+    CV_RESULT_FAIL   = 1,    /* 失败   */
+    CV_RESULT_SKIP   = 2,    /* 跳过   */
+    CV_RESULT_ERROR  = 3,    /* 异常   */
+} cv_test_result_t;
+
+/* ---- cv_test_case：最小执行单位 ----
+ *
+ * pre_test / post_test 在 func 前后调用，用于单个用例级的
+ * 资源准备与清理（如 mock 初始化、临时文件创建等）。
+ * enabled=0 时跳过该用例（结果记为 SKIP）。
+ */
 typedef struct cv_test_case {
-    char            name[64];
-    test_func_t     func;
-    struct list_head case_node;  /* 链接到 module->case_list */
-    int             result;      /* 0=PASS, -1=FAIL, 1=SKIP */
+    char                name[CV_NAME_MAX];      /* 用例名称          */
+    cv_test_func_t      func;                   /* 测试函数          */
+    cv_test_func_t      pre_test;               /* 用例前置回调      */
+    cv_test_func_t      post_test;              /* 用例后置回调      */
+    struct list_head    case_node;              /* 链接: module->case_list */
+    cv_test_result_t    result;                 /* 执行结果          */
+    char                errmsg[CV_ERR_MSG_MAX]; /* 失败时的描述信息    */
+    int                 enabled;                /* 1=执行, 0=跳过    */
 } cv_test_case_t;
 
-/* 测试模块 — 包含多个 test_case */
+/* ---- cv_test_module：包含多个 test_case ----
+ *
+ * pre_test / post_test 在遍历本模块所有用例的前后各调用一次，
+ * 适合模块级的资源分配与释放。
+ * enabled=0 时跳过整个模块及其所有用例。
+ */
 typedef struct cv_test_module {
-    char            name[64];
-    struct list_head case_list;   /* 挂载 cv_test_case */
-    struct list_head module_node; /* 链接到 group->module_list */
-    int             case_count;
-    int             pass_count;
-    int             fail_count;
-    int             skip_count;
-    /* 模块级钩子 */
-    void (*setup)(void);
-    void (*teardown)(void);
+    char                name[CV_NAME_MAX];       /* 模块名称          */
+    struct list_head    case_list;               /* 头: 挂载 cv_test_case  */
+    struct list_head    module_node;             /* 链接: group->module_list */
+    int                 case_count;              /* 注册的用例总数      */
+    int                 pass_count;              /* 通过数             */
+    int                 fail_count;              /* 失败数             */
+    int                 skip_count;              /* 跳过数             */
+    int                 error_count;             /* 异常数             */
+    cv_test_func_t      pre_test;                /* 模块前置回调       */
+    cv_test_func_t      post_test;               /* 模块后置回调       */
+    int                 enabled;                 /* 1=执行, 0=跳过     */
 } cv_test_module_t;
 
-/* 测试组 — 包含多个 test_module */
+/* ---- cv_test_group：包含多个 test_module ----
+ *
+ * pre_test / post_test 在遍历本组所有模块的前后各调用一次，
+ * 适合组级的全局初始化与清理。
+ * enabled=0 时跳过整个组及其所有模块/用例。
+ */
 typedef struct cv_test_group {
-    char            name[64];
-    struct list_head module_list; /* 挂载 cv_test_module */
-    struct list_head group_node;  /* 链接到 framework->group_list */
-    int             module_count;
-    int             pass_count;
-    int             fail_count;
-    int             skip_count;
-    /* 组级钩子 */
-    void (*setup)(void);
-    void (*teardown)(void);
+    char                name[CV_NAME_MAX];       /* 组名称            */
+    struct list_head    module_list;             /* 头: 挂载 cv_test_module  */
+    struct list_head    group_node;              /* 链接: framework->group_list */
+    int                 module_count;            /* 注册的模块总数      */
+    int                 pass_count;              /* 通过数（含子模块）  */
+    int                 fail_count;              /* 失败数             */
+    int                 skip_count;              /* 跳过数             */
+    int                 error_count;             /* 异常数             */
+    cv_test_func_t      pre_test;                /* 组前置回调         */
+    cv_test_func_t      post_test;               /* 组后置回调         */
+    int                 enabled;                 /* 1=执行, 0=跳过     */
 } cv_test_group_t;
 
-/* 框架全局 */
+/* ---- cv_test_framework：全局单例 ---- */
 typedef struct cv_test_framework {
-    struct list_head group_list;
-    int             group_count;
-    int             total_pass;
-    int             total_fail;
-    int             total_skip;
+    struct list_head    group_list;              /* 头: 挂载 cv_test_group  */
+    int                 group_count;             /* 注册的组总数        */
+    int                 total_pass;
+    int                 total_fail;
+    int                 total_skip;
+    int                 total_error;
+    int                 total_run;               /* 实际执行的用例数    */
 } cv_test_framework_t;
 
-/* API */
+/* ---- 公共 API ---- */
+
+/* 获取框架全局单例 */
+cv_test_framework_t *cv_framework_get(void);
+
+/* 注册（使用 constructor 宏自动调用，也可手动调用） */
 cv_test_group_t  *cv_group_register(const char *name);
 cv_test_module_t *cv_module_register(cv_test_group_t *group, const char *name);
 cv_test_case_t   *cv_case_register(cv_test_module_t *module,
-                                    const char *name, test_func_t func);
-void              cv_group_set_hooks(cv_test_group_t *g,
-                                     void (*setup)(void), void (*teardown)(void));
-void              cv_module_set_hooks(cv_test_module_t *m,
-                                      void (*setup)(void), void (*teardown)(void));
-int               cv_run_all(void);
+                                    const char *name, cv_test_func_t func);
+
+/* 设置钩子（pre_test / post_test 传 NULL 表示不设置） */
+void cv_group_set_hooks(cv_test_group_t  *g,
+                        cv_test_func_t pre_test, cv_test_func_t post_test);
+void cv_module_set_hooks(cv_test_module_t *m,
+                         cv_test_func_t pre_test, cv_test_func_t post_test);
+void cv_case_set_hooks(cv_test_case_t   *c,
+                       cv_test_func_t pre_test, cv_test_func_t post_test);
+
+/* 启用/禁用 */
+void cv_group_enable(cv_test_group_t  *g,  int enable);
+void cv_module_enable(cv_test_module_t *m, int enable);
+void cv_case_enable(cv_test_case_t   *c,  int enable);
+
+/* 运行 */
+int  cv_run_all(void);
+void cv_summary(void);
 ```
 
 ### 4.3 `cv_macros.h` — 用户便捷宏
 
 ```c
-#define TEST_GROUP(name)                       static cv_test_group_t *name = cv_group_register(#name)
-#define TEST_MODULE(group, name)               static cv_test_module_t *name = cv_module_register(group, #name)
-#define TEST_CASE(module, name)                static void name(void); \
-                                                static cv_test_case_t *name##_ptr = cv_case_register(module, #name, name); \
-                                                static void name(void)
-#define MODULE_SETUP(module, fn)               cv_module_set_hooks(module, fn, NULL)
-#define MODULE_TEARDOWN(module, fn)            cv_module_set_hooks(module, NULL, fn)
-#define GROUP_SETUP(group, fn)                 cv_group_set_hooks(group, fn, NULL)
-#define GROUP_TEARDOWN(group, fn)              cv_group_set_hooks(group, NULL, fn)
-#define CV_ASSERT(cond)                        do { if (!(cond)) { ... } } while(0)
+/* ---- 注册宏（constructor 自动注册） ---- */
+
+#define TEST_GROUP(name)                                               \
+    static cv_test_group_t *__cv_grp_##name;                          \
+    __attribute__((constructor(101)))                                   \
+    static void __cv_reg_grp_##name(void) {                            \
+        __cv_grp_##name = cv_group_register(#name);                   \
+    }
+
+#define TEST_MODULE(group, name)                                       \
+    static cv_test_module_t *__cv_mod_##name;                         \
+    __attribute__((constructor(102)))                                   \
+    static void __cv_reg_mod_##name(void) {                            \
+        __cv_mod_##name = cv_module_register(group, #name);           \
+    }
+
+#define TEST_CASE(module, name)                                        \
+    static void name(void);                                            \
+    __attribute__((constructor(103)))                                   \
+    static void __cv_reg_case_##name(void) {                           \
+        cv_case_register(module, #name, name);                        \
+    }                                                                  \
+    static void name(void)
+
+/* ---- 钩子宏 ---- */
+
+#define GROUP_PRE_TEST(group, fn)       cv_group_set_hooks(group, fn, NULL)
+#define GROUP_POST_TEST(group, fn)      cv_group_set_hooks(group, NULL, fn)
+#define MODULE_PRE_TEST(module, fn)     cv_module_set_hooks(module, fn, NULL)
+#define MODULE_POST_TEST(module, fn)    cv_module_set_hooks(module, NULL, fn)
+#define CASE_PRE_TEST(case_ptr, fn)     cv_case_set_hooks(case_ptr, fn, NULL)
+#define CASE_POST_TEST(case_ptr, fn)    cv_case_set_hooks(case_ptr, NULL, fn)
+
+/* ---- 断言宏 ---- */
+
+#define CV_ASSERT(cond)                       do {                                     \
+        if (!(cond)) {                                                               \
+            cv_test_current_case_fail(__FILE__, __LINE__, #cond);                    \
+        }                                                                           \
+    } while (0)
+
+#define CV_ASSERT_EQ(a, b)                   do {                                     \
+        long _ea = (long)(a), _eb = (long)(b);                                       \
+        if (_ea != _eb) {                                                            \
+            char _ebuf[CV_ERR_MSG_MAX];                                              \
+            snprintf(_ebuf, sizeof(_ebuf), "%s != %s  (%ld vs %ld)",               \
+                     #a, #b, _ea, _eb);                                               \
+            cv_test_current_case_fail(__FILE__, __LINE__, _ebuf);                    \
+        }                                                                           \
+    } while (0)
 ```
 
 ### 4.4 `cv_runner.c` — 运行器
@@ -247,34 +350,48 @@ int               cv_run_all(void);
 ```mermaid
 flowchart TD
     START[cv_run_all] --> G_LOOP{遍历 group 链表}
-    G_LOOP --> G_SETUP[group.setup if set]
-    G_SETUP --> M_LOOP{遍历 module 链表}
+    G_LOOP --> G_CHK{group.enabled?}
+    G_CHK -->|No| G_SKIP[group.skip++ 并跳过全部模块]
+    G_CHK -->|Yes| G_PRE[group.pre_test if set]
+    G_PRE --> M_LOOP{遍历 module 链表}
 
-    M_LOOP --> M_SETUP[module.setup if set]
-    M_SETUP --> C_LOOP{遍历 case 链表}
+    M_LOOP --> M_CHK{module.enabled?}
+    M_CHK -->|No| M_SKIP[module.skip++ 并跳过全部用例]
+    M_CHK -->|Yes| M_PRE[module.pre_test if set]
+    M_PRE --> C_LOOP{遍历 case 链表}
 
-    C_LOOP --> RUN[case.func]
-    RUN --> CHECK{检查 case.result}
+    C_LOOP --> C_CHK{case.enabled?}
+    C_CHK -->|No| C_SKIP[case.result=SKIP, module.skip++]
+    C_CHK -->|Yes| C_PRE[case.pre_test if set]
+    C_PRE --> RUN[case.func]
+    RUN --> C_POST[case.post_test if set]
+    C_POST --> CHECK{检查 case.result}
     CHECK -->|PASS| STAT_P[module.pass++]
     CHECK -->|FAIL| STAT_F[module.fail++]
-    CHECK -->|SKIP| STAT_S[module.skip++]
+    CHECK -->|ERROR| STAT_E[module.error++]
     STAT_P --> C_LOOP
     STAT_F --> C_LOOP
-    STAT_S --> C_LOOP
+    STAT_E --> C_LOOP
+    C_SKIP --> C_LOOP
 
-    C_LOOP -->|遍历完| M_TEARDOWN[module.teardown if set]
-    M_TEARDOWN --> M_LOOP
+    C_LOOP -->|遍历完| M_POST[module.post_test if set]
+    M_POST --> M_LOOP
+    M_SKIP --> M_LOOP
 
-    M_LOOP -->|遍历完| G_TEARDOWN[group.teardown if set]
-    G_TEARDOWN --> G_LOOP
+    M_LOOP -->|遍历完| G_POST[group.post_test if set]
+    G_POST --> G_LOOP
+    G_SKIP --> G_LOOP
 
-    G_LOOP -->|遍历完| SUMMARY[打印统计摘要]
+    G_LOOP -->|遍历完| SUMMARY[cv_summary 打印统计]
     SUMMARY --> END[返回 total_fail == 0 ? 0 : 1]
 
     style START fill:#f9f,stroke:#333
     style END fill:#f9f,stroke:#333
     style SUMMARY fill:#bbf,stroke:#333
     style RUN fill:#bfb,stroke:#333
+    style G_CHK fill:#fee,stroke:#333
+    style M_CHK fill:#fee,stroke:#333
+    style C_CHK fill:#fee,stroke:#333
 ```
 
 ### 4.5 `cv_main.c` — 入口
@@ -325,39 +442,43 @@ sequenceDiagram
 ===========================================
 
 [GROUP] group_math
-  [MODULE] module_add ................ SETUP
-    [PASS] test_1_plus_1
-    [PASS] test_neg_add
-    [PASS] test_zero_add
-  [MODULE] module_add ................ TEARDOWN
-  [MODULE] module_sub ................ SETUP
+  [GROUP PRE_TEST] group_math init resources...
+  [MODULE] module_add
+    [MODULE PRE_TEST] init adder context
+      [CASE PRE_TEST] setup operand buffer
+      [PASS] test_1_plus_1
+      [CASE POST_TEST] cleanup operand buffer
+      [CASE PRE_TEST] setup operand buffer
+      [PASS] test_neg_add
+      [CASE POST_TEST] cleanup operand buffer
+      [CASE PRE_TEST] setup operand buffer
+      [PASS] test_zero_add
+      [CASE POST_TEST] cleanup operand buffer
+    [MODULE POST_TEST] destroy adder context
+  [MODULE] module_sub
     [PASS] test_5_minus_3
     [PASS] test_neg_minus_neg
-  [MODULE] module_sub ................ TEARDOWN
-  [MODULE] module_mul ................ SETUP
+  [MODULE] module_mul
     [PASS] test_2_times_3
-    [FAIL] test_overflow  <-- expected 0, got -1
-  [MODULE] module_mul ................ TEARDOWN
+    [FAIL] test_overflow  <-- test_math.c:42: expected 0, got -1
+  [GROUP POST_TEST] group_math release resources...
 
 [GROUP] group_string
-  [MODULE] module_concat ................ SETUP
+  [MODULE] module_concat
     [PASS] test_basic_concat
     [PASS] test_empty_concat
-  [MODULE] module_concat ................ TEARDOWN
-  [MODULE] module_len ................ SETUP
+  [MODULE] module_len
     [PASS] test_ascii_len
     [PASS] test_empty_len
-  [MODULE] module_len ................ TEARDOWN
-  [MODULE] module_copy ................ SETUP
+  [MODULE] module_copy
     [PASS] test_strcpy_basic
     [PASS] test_overlap_copy
-  [MODULE] module_copy ................ TEARDOWN
 
 ===========================================
   SUMMARY
 ===========================================
   Groups:  2  |  Modules: 6  |  Cases: 14
-  PASS: 13  |  FAIL: 1  |  SKIP: 0
+  PASS: 13  |  FAIL: 1  |  ERROR: 0  |  SKIP: 0
 ===========================================
 ```
 
@@ -371,13 +492,19 @@ sequenceDiagram
 
 TEST_GROUP(group_math);
 
-/* --- module_add --- */
+/* --- 组级钩子 --- */
+static void math_pre(void)  { printf("[GROUP PRE_TEST] group_math init resources...\n"); }
+static void math_post(void) { printf("[GROUP POST_TEST] group_math release resources...\n"); }
+GROUP_PRE_TEST(group_math, math_pre);
+GROUP_POST_TEST(group_math, math_post);
+
+/* ==================== module_add ==================== */
 TEST_MODULE(group_math, module_add);
 
-static void add_setup(void)   { printf("  [SETUP] module_add\n"); }
-static void add_teardown(void){ printf("  [TEARDOWN] module_add\n"); }
-MODULE_SETUP(module_add, add_setup);
-MODULE_TEARDOWN(module_add, add_teardown);
+static void add_pre(void)  { printf("    [MODULE PRE_TEST] init adder context\n"); }
+static void add_post(void) { printf("    [MODULE POST_TEST] destroy adder context\n"); }
+MODULE_PRE_TEST(module_add, add_pre);
+MODULE_POST_TEST(module_add, add_post);
 
 TEST_CASE(module_add, test_1_plus_1) {
     CV_ASSERT(1 + 1 == 2);
@@ -387,11 +514,26 @@ TEST_CASE(module_add, test_neg_add) {
     CV_ASSERT(-1 + -1 == -2);
 }
 
-/* --- module_sub --- */
+/* 用例级钩子（可选） */
+static void case_buf_pre(void)  { printf("      [CASE PRE_TEST] setup operand buffer\n"); }
+static void case_buf_post(void) { printf("      [CASE POST_TEST] cleanup operand buffer\n"); }
+
+TEST_CASE(module_add, test_zero_add) {
+    /* 手动设置 case 级钩子 */
+    CASE_PRE_TEST(__cv_case_test_zero_add, case_buf_pre);
+    CASE_POST_TEST(__cv_case_test_zero_add, case_buf_post);
+    CV_ASSERT(0 + 0 == 0);
+}
+
+/* ==================== module_sub ==================== */
 TEST_MODULE(group_math, module_sub);
 
 TEST_CASE(module_sub, test_5_minus_3) {
     CV_ASSERT(5 - 3 == 2);
+}
+
+TEST_CASE(module_sub, test_neg_minus_neg) {
+    CV_ASSERT(-1 - (-1) == 0);
 }
 ```
 
@@ -459,8 +601,12 @@ graph BT
 |----------|------|
 | Linux 双向链表 | `list_head` 嵌入结构体，零开销，支持安全遍历与删除 |
 | 三层结构 | Group → Module → Case，层次清晰，钩子粒度可控 |
+| 三级 pre/post_test | group / module / case 各自拥有 pre_test + post_test，层级嵌套调用 |
+| enabled 字段 | 三层均支持 enable/disable，禁用时整棵子树跳过 |
+| result + errmsg | case 记录枚举结果与错误描述，失败时可追溯文件名/行号 |
+| error 状态 | 区分 FAIL（断言失败）与 ERROR（运行时异常如段错误） |
 | `__attribute__((constructor))` | 编译期自动注册，用户无需手动调用注册函数 |
 | 优先级控制 | group(101) < module(102) < case(103)，保证注册顺序 |
-| CV_ASSERT 宏 | 自动捕获文件名、行号、条件表达式 |
+| CV_ASSERT / CV_ASSERT_EQ | 自动捕获文件名、行号、条件表达式；EQ 额外打印实际值 |
 | 模块化编译 | 框架与测试分离，添加新测试只需新建 .c 文件 |
-| 统计汇总 | 每个 module/group 独立统计，框架级汇总，便于 CI 判定 |
+| 统计汇总 | 每个 module/group 独立统计 pass/fail/skip/error，框架级汇总便于 CI 判定 |
