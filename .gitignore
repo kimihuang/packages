@@ -9,3 +9,6 @@ __pycache__
 report
 build
 Testing
+allure-report/
+allure-results/
+qemu_sample_env/labgrid/tools/

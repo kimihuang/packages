@@ -1,14 +1,35 @@
 #!/bin/bash
 # 测试报告生成脚本
-# 使用 pytest-html 生成看板报告
+# 使用 allure-pytest + allure CLI 生成看板报告
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_PYTEST="/home/lion/workdir/sourcecode/quantum_main/.venv/bin/pytest"
+VENV_ALLURE="${SCRIPT_DIR}/tools/allure-2.29.0/bin/allure"
 ENV="labgrid-env.yaml"
-REPORT_DIR="${SCRIPT_DIR}/report"
+ALLURE_DIR="${SCRIPT_DIR}/allure-results"
+ALLURE_REPORT="${SCRIPT_DIR}/allure-report"
 
-rm -rf "${REPORT_DIR}"
-mkdir -p "${REPORT_DIR}"
+# 安装 allure CLI（如果不存在）
+ensure_allure() {
+    if [ -x "${VENV_ALLURE}" ]; then
+        return 0
+    fi
+    local tar="/tmp/allure-2.29.0.tgz"
+    if [ ! -f "${tar}" ] || [ "$(wc -c < "${tar}")" -lt 10000000 ]; then
+        echo "Downloading allure CLI..."
+        curl -L --connect-timeout 10 --max-time 600 \
+            "https://github.com/allure-framework/allure2/releases/download/2.29.0/allure-2.29.0.tgz" \
+            -o "${tar}"
+    fi
+    mkdir -p "${SCRIPT_DIR}/tools"
+    tar -xzf "${tar}" -C "${SCRIPT_DIR}/tools/"
+    chmod +x "${VENV_ALLURE}"
+    echo "Allure CLI installed to ${VENV_ALLURE}"
+}
+
+# 清理旧数据
+rm -rf "${ALLURE_DIR}" "${ALLURE_REPORT}"
+mkdir -p "${ALLURE_DIR}"
 
 echo "========================================"
 echo "  Running labgrid QEMU tests..."
@@ -19,13 +40,11 @@ cd "${SCRIPT_DIR}"
 ${VENV_PYTEST} \
     -v \
     --lg-env "${ENV}" \
-    --html="${REPORT_DIR}/report.html" \
-    --self-contained-html \
-    --json-report \
-    --json-report-file="${REPORT_DIR}/report.json" \
+    --alluredir="${ALLURE_DIR}" \
+    --clean-alluredir \
     --tb=short \
     -s \
-    2>&1 | tee "${REPORT_DIR}/console.log"
+    2>&1 | tee "${ALLURE_DIR}/console.log"
 
 EXIT_CODE=${PIPESTATUS[0]}
 
@@ -39,37 +58,14 @@ fi
 echo "========================================"
 echo ""
 
-# 打印摘要
-if command -v python3 &>/dev/null; then
-    python3 -c "
-import json
-with open('${REPORT_DIR}/report.json') as f:
-    data = json.load(f)
-
-summary = data.get('summary', {})
-total = summary.get('total', 0)
-passed = summary.get('passed', 0)
-failed = summary.get('failed', 0)
-error = summary.get('error', 0)
-duration = data.get('duration', 0)
-
-print('Test Summary')
-print(f'  Total:   {total}')
-print(f'  Passed:  {passed}')
-print(f'  Failed:  {failed}')
-print(f'  Error:   {error}')
-print(f'  Time:    {duration:.2f}s')
-
-if failed > 0 or error > 0:
-    print()
-    print('Failures:')
-    for t in data.get('tests', []):
-        if t.get('outcome') in ('failed', 'error'):
-            print(f'  - {t.get(\"nodeid\", \"\")}')
-"
-fi
+# 生成 allure 报告
+echo "Generating allure report..."
+ensure_allure
+"${VENV_ALLURE}" generate "${ALLURE_DIR}" -o "${ALLURE_REPORT}" --clean
 
 echo ""
-echo "Report: ${REPORT_DIR}/report.html"
+echo "========================================"
+echo "  Report: file://${ALLURE_REPORT}/index.html"
+echo "========================================"
 
 exit ${EXIT_CODE}

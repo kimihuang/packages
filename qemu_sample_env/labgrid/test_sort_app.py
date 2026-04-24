@@ -4,11 +4,12 @@ sort_app 是一个包含 7 种排序算法的命令行工具，已集成到 root
 测试通过 ShellDriver 在 QEMU Linux 中执行 sort_app 命令进行验证。
 """
 
+import allure
 import pytest
 from labgrid.driver.shelldriver import ShellDriver
-from labgrid.driver.shelldriver import ShellDriver
 
 
+@allure.feature("sort_app")
 class TestSortAppBasic:
     """基础功能测试"""
 
@@ -49,6 +50,8 @@ class TestSortAppBasic:
         assert "PASS" in text
 
 
+@allure.feature("sort_app")
+@allure.story("Algorithm Correctness")
 class TestSortAppAlgorithms:
     """所有 7 种算法正确性验证"""
 
@@ -61,7 +64,6 @@ class TestSortAppAlgorithms:
         output = shell.run_check(f"sort_app -a {algo} -n 100 -s 42 -p")
         text = "\n".join(output)
 
-        # 提取 After 行的数字
         after_line = None
         for line in output:
             if line.strip().startswith("After:"):
@@ -73,12 +75,13 @@ class TestSortAppAlgorithms:
         numbers = list(map(int, numbers_str.split()))
         assert len(numbers) == 100
 
-        # 验证升序
         for i in range(len(numbers) - 1):
             assert numbers[i] <= numbers[i + 1], \
                 f"{algo}: not sorted at index {i}: {numbers[i]} > {numbers[i+1]}"
 
 
+@allure.feature("sort_app")
+@allure.story("Edge Cases")
 class TestSortAppEdgeCases:
     """边界场景测试"""
 
@@ -90,7 +93,7 @@ class TestSortAppEdgeCases:
         assert "PASS" in text
 
     def test_already_sorted(self, qemu_env):
-        """已排序数组（seed 固定生成）"""
+        """已排序数组"""
         shell = qemu_env.get_driver(ShellDriver)
         output = shell.run_check("sort_app -a quick -n 50 -s 1")
         text = "\n".join(output)
@@ -108,9 +111,6 @@ class TestSortAppEdgeCases:
         shell = qemu_env.get_driver(ShellDriver)
         output = shell.run_check("sort_app -b -n 1000 -s 42")
         text = "\n".join(output)
-        # 每个算法都应显示 PASS
         assert "PASS" in text
-        # 验证 7 种算法都运行了
         for algo in ["bubble", "selection", "insertion", "shell", "merge", "quick", "heap"]:
             assert algo in text, f"Missing algorithm in benchmark: {algo}"
-
