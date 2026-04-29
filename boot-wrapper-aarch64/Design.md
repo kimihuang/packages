@@ -15,61 +15,60 @@ boot-wrapper-aarch64 是 ARM 官方提供的轻量级引导固件，用于在 AA
 
 ```mermaid
 sequenceDiagram
-    participant QEMU as QEMU (virt)
-    participant BW as Boot-wrapper
-    participant PSCI as PSCI (smc)
-    participant Kernel as Linux Kernel
+    participant QEMU
+    participant BW
+    participant PSCI
+    participant Kernel
 
     Note over QEMU: CPU 从 EL3 复位
-    QEMU->>BW: 跳转到 0x40000000 (_start)
+    QEMU->>BW: 跳转到 _start
 
     rect rgb(230, 245, 255)
-        Note over BW: Primary CPU (CPU0)
-        BW->>BW: 检测当前 EL (EL3)
-        BW->>BW: 配置 SCTLR_EL3
-        BW->>BW: 读取 MPIDR_EL1
-        BW->>BW: find_logical_id() → CPU0
-        BW->>BW: setup_stack()
-        BW->>BW: init_uart() → PL011 38400 8N1
-        BW->>BW: 打印 "Boot-wrapper v0.2"
+        Note over BW: Primary CPU0
+        BW->>BW: 检测当前 EL
+        BW->>BW: 配置 SCTLR
+        BW->>BW: 读取 MPIDR
+        BW->>BW: find_logical_id
+        BW->>BW: setup_stack
+        BW->>BW: init_uart
+        BW->>BW: 打印 Boot-wrapper v0.2
         BW->>BW: 打印内存布局
-        BW->>BW: cpu_init_arch() → 配置 EL3 寄存器
-        BW->>BW: gic_secure_init()
-        BW->>BW: 设置 VBAR_EL3 → psci_vectors
+        BW->>BW: cpu_init_arch
+        BW->>BW: gic_secure_init
+        BW->>BW: 设置 VBAR_EL3
     end
 
     rect rgb(255, 245, 230)
-        Note over BW: Secondary CPUs (CPU1-3)
-        BW->>>BW: CPU1-3 上电, 进入 _start
-        BW->>>BW: find_logical_id() → CPU1/2/3
-        BW->>>BW: setup_stack()
-        BW->>>BW: 等待 CPU0 完成初始化 (wfe)
-        BW->>>BW: cpu_init_arch()
-        BW->>>BW: 通知 CPU0 完成 (sev)
+        Note over BW: Secondary CPU1 到 CPU3
+        BW->>BW: 上电进入 _start
+        BW->>BW: find_logical_id
+        BW->>BW: setup_stack
+        BW->>BW: wfe 等待
+        BW->>BW: cpu_init_arch
+        BW->>BW: sev 通知就绪
     end
 
     rect rgb(230, 255, 230)
-        Note over BW: Primary CPU 跳转内核
+        Note over BW: 跳转内核
         BW->>BW: 等待所有 CPU 就绪
-        BW->>BW: 打印 "All CPUs initialized"
-        BW->>BW: first_spin() → entrypoint=kernel__start
-        BW->>BW: 配置 SCTLR_EL1, SCTLR_EL2
-        BW->>BW: msr ELR_EL3 = kernel 入口地址
-        BW->>BW: msr SPSR_EL3 = EL2h 模式
-        BW->>BW: eret → 降级到 EL2
+        BW->>BW: 打印 All CPUs initialized
+        BW->>BW: first_spin 跳转 kernel
+        BW->>BW: 配置 SCTLR_EL1 EL2
+        BW->>BW: 设置 ELR_EL3 和 SPSR_EL3
+        BW->>BW: eret 降级到 EL2
     end
 
     rect rgb(255, 230, 240)
         Note over Kernel: Linux 内核启动
-        BW->>Kernel: x0 = DTB 地址
-        Kernel->>Kernel: 解析 DTB, 发现 PSCI (smc)
-        Kernel->>PSCI: PSCI_CPU_ON (0xc4000003) 唤醒 CPU1
-        PSCI->>BW: SMC 异常 → psci_vectors
-        BW->>BW: psci_cpu_on() 写入 branch_table
+        BW->>Kernel: x0 等于 DTB 地址
+        Kernel->>Kernel: 解析 DTB 发现 PSCI
+        Kernel->>PSCI: PSCI_CPU_ON 唤醒 CPU1
+        PSCI->>BW: SMC 进入 psci_vectors
+        BW->>BW: psci_cpu_on 写入 branch_table
         BW->>BW: eret 返回内核
         Kernel->>BW: CPU1 读取 branch_table
-        BW->>Kernel: CPU1 跳转到内核入口
-        Note over Kernel: CPU2, CPU3 同理
+        BW->>Kernel: CPU1 跳转内核入口
+        Note over Kernel: CPU2 CPU3 同理
     end
 ```
 
@@ -78,19 +77,21 @@ sequenceDiagram
 ### 3.1 实际内存映射（QEMU virt + quantum_qemu）
 
 ```mermaid
-block-beta
-    columns 4
-    block:MEM["物理内存 0x40000000 - 0xBFFFFFFF (2GB)"]:columns 1
-        block:BOOT["boot-wrapper + kernel + dtb + initrd"]:columns 1
-            BW["boot-wrapper 代码<br/>(text/data/bss/stack)<br/>0x40000000<br/>~7KB"]
-            KERNEL["Linux 内核 Image<br/>0x40200000<br/>~8.3MB"]
-            DTB["修改后的 DTB (fdt.dtb)<br/>0x48000000<br/>~8KB"]
-            INITRD["initrd (rootfs.cpio)<br/>0x50000000<br/>~50MB"]
+flowchart TD
+    subgraph MEM["物理内存 0x40000000 - 0xBFFFFFFF"]
+        subgraph BOOT["boot-wrapper + kernel + dtb + initrd"]
+            BW["boot-wrapper 代码\n(text/data/bss/stack)\n0x40000000 ~7KB"]
+            KERNEL["Linux 内核 Image\n0x40200000 ~8.3MB"]
+            DTB["修改后的 DTB fdt.dtb\n0x48000000 ~8KB"]
+            INITRD["initrd rootfs.cpio\n0x50000000 ~50MB"]
         end
-        MBOX["Mailbox<br/>0x4000FFF8<br/>8 bytes"]
-        MEMDISK["Memdisk (预留)<br/>0x78000000<br/>256MB"]
-        FREE["可用内存<br/>0x58000000 - 0x77FFFFFF"]
+        MBOX["Mailbox\n0x4000FFF8\n8 bytes"]
+        MEMDISK["Memdisk 预留\n0x78000000\n256MB"]
+        FREE["可用内存\n0x58000000 - 0x77FFFFFF"]
     end
+    BW --> KERNEL
+    KERNEL --> DTB
+    DTB --> INITRD
 ```
 
 ### 3.2 各区域偏移与大小
@@ -108,20 +109,20 @@ block-beta
 ### 3.3 链接脚本内存排列
 
 ```mermaid
-graph LR
-    subgraph "linux-system.axf (ELF)"
-        direction TB
-        K["kernel (Image)"]
+flowchart LR
+    subgraph ELF["linux-system.axf 链接排列顺序"]
+        K["kernel Image"]
         DTB["fdt.dtb"]
-        FS["initrd (rootfs.cpio)"]
-        BOOT[".boot section<br/>_start 入口"]
-        MBOX[".mbox section<br/>branch_table"]
+        FS["initrd cpio"]
+        BOOT[".boot section _start"]
+        MBOX[".mbox branch_table"]
+        K --> DTB --> FS --> BOOT --> MBOX
     end
-    K -->|KERNEL_OFFSET=0x200000| ADDR1["0x40200000"]
-    DTB -->|FDT_OFFSET=0x8000000| ADDR2["0x48000000"]
-    FS -->|FS_OFFSET=0x10000000| ADDR3["0x50000000"]
-    BOOT -->|PHYS_OFFSET=0x0| ADDR4["0x40000000"]
-    MBOX -->|MBOX_OFFSET=0xFFF8| ADDR5["0x4000FFF8"]
+    K ---|"运行地址 0x40200000\nKERNEL_OFFSET"| A1[" "]
+    DTB ---|"运行地址 0x48000000\nFDT_OFFSET"| A2[" "]
+    FS ---|"运行地址 0x50000000\nFS_OFFSET"| A3[" "]
+    BOOT ---|"运行地址 0x40000000\nPHYS_OFFSET"| A4[" "]
+    MBOX ---|"运行地址 0x4000FFF8\nMBOX_OFFSET"| A5[" "]
 ```
 
 > 注意：链接脚本中 `.boot` 放在最后，但运行时加载地址在最前面（`PHYS_OFFSET`）。ELF 入口点 `_start` 位于 `0x40000000`。
@@ -242,14 +243,14 @@ flowchart TD
 每个 CPU 独立的栈空间，位于 `.boot` section 的 `.stack` 区域：
 
 ```mermaid
-block-beta
-    columns 1
-    block:STACK[".stack 区域"]:columns 1
-        S3["CPU3 stack<br/>256 bytes"]
-        S2["CPU2 stack<br/>256 bytes"]
-        S1["CPU1 stack<br/>256 bytes"]
-        S0["CPU0 stack<br/>256 bytes"]
+flowchart TD
+    subgraph STACK[".stack 区域"]
+        S3["CPU3 stack 256 bytes"]
+        S2["CPU2 stack 256 bytes"]
+        S1["CPU1 stack 256 bytes"]
+        S0["CPU0 stack 256 bytes"]
     end
+    S3 --> S2 --> S1 --> S0
 ```
 
 栈分配公式：`sp = stack_top - cpu_id * STACK_SIZE`
@@ -263,19 +264,19 @@ block-beta
 ```mermaid
 stateDiagram-v2
     [*] --> SpinInvalid: 次级 CPU 上电
-    SpinInvalid --> SpinInvalid: wfe 等待<br/>(branch_table[cpu] == INVALID)
-    SpinInvalid --> JumpKernel: CPU0 写入 branch_table[cpu]<br/>= kernel 入口地址
+    SpinInvalid --> SpinInvalid: wfe 等待
+    SpinInvalid --> JumpKernel: branch_table 写入内核入口
     JumpKernel --> [*]: 跳转到内核
 
     state SpinInvalid {
         [*] --> Wait: 检查 branch_table
-        Wait --> Wait: 地址无效, wfe
+        Wait --> Wait: 地址无效 wfe
     }
 
     state JumpKernel {
         [*] --> Read: 读取 branch_table
-        Read --> Eret: jump_kernel()
-        Eret --> [*]: eret → EL2
+        Read --> Eret: jump_kernel
+        Eret --> [*]: eret 到 EL2
     }
 ```
 
@@ -283,18 +284,17 @@ stateDiagram-v2
 
 ```mermaid
 sequenceDiagram
-    participant K as Linux Kernel (EL2)
-    participant EL3 as Boot-wrapper (EL3)
+    participant K as Linux_Kernel_EL2
+    participant EL3 as Boot_wrapper_EL3
     participant BT as branch_table
 
     Note over K: 内核调用 PSCI_CPU_ON
-    K->>EL3: smc #0 (x0=0xc4000003, x1=target_mpidr, x2=entry_addr)
-    EL3->>EL3: 异常向量 → psci_vectors<br/>→ smc_entry64
-
-    Note over EL3: 保存寄存器到栈
-    EL3->>EL3: psci_call()
-    EL3->>EL3: find_logical_id(target_mpidr)
-    EL3->>BT: bakery_lock → 写入 branch_table[cpu]
+    K->>EL3: smc 0 x0=0xc4000003 x1=target_mpidr x2=entry_addr
+    EL3->>EL3: 异常向量进入 psci_vectors
+    EL3->>EL3: smc_entry64 保存寄存器到栈
+    EL3->>EL3: psci_call
+    EL3->>EL3: find_logical_id target_mpidr
+    EL3->>BT: bakery_lock 写入 branch_table
 
     alt 成功
         EL3->>EL3: 返回 PSCI_RET_SUCCESS
@@ -302,11 +302,11 @@ sequenceDiagram
         EL3->>EL3: 返回 PSCI_RET_ALREADY_ON
     end
 
-    EL3->>EL3: eret → 返回内核 (EL2)
+    EL3->>EL3: eret 返回内核 EL2
 
     Note over EL3: 次级 CPU 被唤醒
-    EL3->>BT: 检测 branch_table[cpu] 有效
-    EL3->>K: jump_kernel() → eret 到内核入口
+    EL3->>BT: 检测 branch_table 有效
+    EL3->>K: jump_kernel eret 到内核入口
 ```
 
 ### 5.3 PSCI 接口
@@ -401,23 +401,24 @@ boot-wrapper 从 EL3 启动，最终将内核降级到 EL2 执行：
 
 ```mermaid
 stateDiagram-v2
-    state "EL3 (Secure)" as EL3
-    state "EL2 (Non-Secure)" as EL2
-    state "EL1 (Non-Secure)" as EL1
-
     [*] --> EL3: CPU 复位
-    EL3 --> EL3: Boot-wrapper 初始化<br/>(UART, GIC, PSCI, 栈)
-    EL3 --> EL2: eret (ELR_EL3=kernel, SPSR_EL3=EL2h)
+    EL3 --> EL3: Boot-wrapper 初始化
+    EL3 --> EL2: eret 降级到 EL2
 
-    state EL2 {
-        [*] --> KernelSetup: 内核解压/启动
-        KernelSetup --> KernelRun: 内核正常运行
-        KernelRun --> KernelRun: PSCI smc 调用
-        note right of KernelRun: 内核通过 smc #0<br/>调用 PSCI 服务
+    state EL3 {
+        [*] --> Init3: UART GIC PSCI 栈
+        Init3 --> Ready3: 初始化完成
     }
 
-    EL2 --> EL3: smc #0 (PSCI 调用)
-    EL3 --> EL2: eret (返回 PSCI 结果)
+    state EL2 {
+        [*] --> KernelSetup: 内核解压启动
+        KernelSetup --> KernelRun: 内核正常运行
+        KernelRun --> PsciCall: 发起 PSCI smc
+        PsciCall --> KernelRun: 返回结果
+    }
+
+    EL2 --> EL3: smc PSCI 调用
+    EL3 --> EL2: eret 返回结果
 ```
 
 ### jump_kernel 详细流程
