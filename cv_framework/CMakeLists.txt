@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Compile options
-add_compile_options(-Wall -Wextra)
+add_compile_options(-Wall -Wextra -g -fno-omit-frame-pointer)
 
 # Framework header path
 include_directories(${CMAKE_SOURCE_DIR}/include)
