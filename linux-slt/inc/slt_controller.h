@@ -22,6 +22,7 @@ public:
     
     // 控制器操作
     bool start();
+    bool start(const SLTConfig& config);
     void stop();
     ExecutionResult processNextCommand();
     

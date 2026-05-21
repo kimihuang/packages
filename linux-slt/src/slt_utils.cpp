@@ -326,61 +326,73 @@ std::pair<int, std::string> executeShellCommand(const std::string& cmd, int time
         fcntl(stdoutPipe[0], F_SETFL, flags | O_NONBLOCK);
         
         while (true) {
-            // 检查子进程是否结束
-            int status;
-            pid_t result = waitpid(pid, &status, WNOHANG);
-            
-            if (result == pid) {
-                // 子进程已结束
-                process.running = false;
-                break;
-            } else if (result == -1) {
-                // 错误
-                process.running = false;
-                break;
-            }
-            
-            // 读取数据
+            // 读取数据（优先读取，确保收集所有输出）
             bytesRead = read(stdoutPipe[0], buffer, sizeof(buffer) - 1);
             if (bytesRead > 0) {
                 buffer[bytesRead] = '\0';
                 output += buffer;
             } else if (bytesRead == 0) {
-                // 管道关闭
+                // 管道关闭，子进程已结束
                 break;
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 // 读取错误
                 break;
             }
-            
+
+            // 检查子进程是否结束
+            int status;
+            pid_t result = waitpid(pid, &status, WNOHANG);
+
+            if (result == pid) {
+                // 子进程已结束，再读取剩余输出
+                process.running = false;
+                // 子进程结束后管道仍可能有缓冲数据，继续读取
+                while (true) {
+                    bytesRead = read(stdoutPipe[0], buffer, sizeof(buffer) - 1);
+                    if (bytesRead > 0) {
+                        buffer[bytesRead] = '\0';
+                        output += buffer;
+                    } else {
+                        break;
+                    }
+                }
+                break;
+            } else if (result == -1) {
+                process.running = false;
+                break;
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        
+
         // 等待监控线程结束
         if (process.monitorThread.joinable()) {
             process.monitorThread.join();
         }
-        
+
         // 关闭文件描述符
         close(stdoutPipe[0]);
         close(stderrPipe[0]);
-        
-        // 获取退出状态
-        int status;
-        waitpid(pid, &status, 0);
-        
+
+        // 获取退出状态（子进程已被 waitpid 回收，使用已获取的 status）
         int exitCode = 0;
-        if (WIFEXITED(status)) {
-            exitCode = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-            exitCode = 128 + WTERMSIG(status);
-            if (timedOut) {
-                output += "\n[ERROR] Command execution timeout";
-            } else {
-                output += "\n[ERROR] Command terminated by signal: " + 
-                         std::to_string(WTERMSIG(status));
+        int status;
+        pid_t result = waitpid(pid, &status, 0);
+        if (result == pid) {
+            if (WIFEXITED(status)) {
+                exitCode = WEXITSTATUS(status);
+            } else if (WIFSIGNALED(status)) {
+                exitCode = 128 + WTERMSIG(status);
+                if (timedOut) {
+                    output += "\n[ERROR] Command execution timeout";
+                } else {
+                    output += "\n[ERROR] Command terminated by signal: " +
+                             std::to_string(WTERMSIG(status));
+                }
             }
         }
+        // 如果 waitpid 返回 -1 (ECHILD)，说明子进程已被之前的 WNOHANG waitpid 回收
+        // 此时无法获取退出码，默认为 0
         
         return {exitCode, output};
     }

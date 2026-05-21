@@ -178,20 +178,29 @@ public:
     std::string getLogDirectory() const { return logDirectory_; }
     int getDefaultTimeout() const { return defaultTimeout_; }
     int getMaxCommandSize() const { return maxCommandSize_; }
-    
+    std::string getTcpAddr() const { return tcpAddr_; }
+    int getTcpPort() const { return tcpPort_; }
+    bool isTcpMode() const { return tcpMode_; }
+
     // Setters
     void setSerialPort(const std::string& port) { serialPort_ = port; }
     void setBaudRate(int baudRate) { baudRate_ = baudRate; }
     void setLogDirectory(const std::string& dir) { logDirectory_ = dir; }
     void setDefaultTimeout(int timeout) { defaultTimeout_ = timeout; }
     void setMaxCommandSize(int size) { maxCommandSize_ = size; }
-    
+    void setTcpAddr(const std::string& addr) { tcpAddr_ = addr; }
+    void setTcpPort(int port) { tcpPort_ = port; }
+    void setTcpMode(bool mode) { tcpMode_ = mode; }
+
 private:
     std::string serialPort_;
     int baudRate_;
     std::string logDirectory_;
     int defaultTimeout_;
     int maxCommandSize_;
+    std::string tcpAddr_;
+    int tcpPort_;
+    bool tcpMode_;
 };
 
 // ================== 控制器类 ==================

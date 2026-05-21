@@ -5,6 +5,12 @@
 port: /dev/ttyAMA0
 baud_rate: 115200
 
+[network]
+# mode: tcp 启用TCP通信模式, serial 使用串口
+mode: tcp
+addr: 0.0.0.0
+port: 9999
+
 [logging]
 directory: /var/log/slt/
 

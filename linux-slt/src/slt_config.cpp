@@ -14,7 +14,10 @@ SLTConfig::SLTConfig()
     , baudRate_(115200)
     , logDirectory_("/var/log/slt/")
     , defaultTimeout_(5000)
-    , maxCommandSize_(4096) {
+    , maxCommandSize_(4096)
+    , tcpAddr_("0.0.0.0")
+    , tcpPort_(9999)
+    , tcpMode_(false) {
 }
 
 bool SLTConfig::loadFromFile(const std::string& configPath) {
@@ -72,6 +75,16 @@ bool SLTConfig::loadFromFile(const std::string& configPath) {
                 else if (key == "max_command_size" || key == "maxCommandSize")
                     maxCommandSize_ = std::stoi(value);
             }
+            if (currentSection == "network") {
+                if (key == "mode" || key == "type") {
+                    tcpMode_ = (value == "tcp" || value == "TCP" || value == "1" || value == "true");
+                } else if (key == "addr" || key == "address" || key == "host") {
+                    tcpAddr_ = value;
+                } else if (key == "port") {
+                    tcpPort_ = std::stoi(value);
+                    tcpMode_ = true;  // 配置了 network port 即启用 TCP 模式
+                }
+            }
         }
 
         return true;
@@ -98,6 +111,10 @@ bool SLTConfig::saveToFile(const std::string& configPath) {
         fout << "\n[commands]\n";
         fout << "default_timeout_ms: " << defaultTimeout_ << "\n";
         fout << "max_command_size: " << maxCommandSize_ << "\n";
+        fout << "\n[network]\n";
+        fout << "mode: " << (tcpMode_ ? "tcp" : "serial") << "\n";
+        fout << "addr: " << tcpAddr_ << "\n";
+        fout << "port: " << tcpPort_ << "\n";
 
         return fout.good();
     } catch (const std::exception& e) {

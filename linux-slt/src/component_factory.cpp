@@ -3,11 +3,13 @@
 
 #include "slt_interfaces.h"
 #include "linux_serial_port.h"
+#include "tcp_server_handler.h"
 #include "slt_command_parser.h"
 #include "system_command_executor.h"
 #include "pattern_log_processor.h"
 #include "slt_controller.h"
 #include <memory>
+#include <iostream>
 
 namespace slt {
 
@@ -30,10 +32,12 @@ std::unique_ptr<LogProcessor> ComponentFactory::createLogProcessor() {
 
 // ================== 带配置的组件创建 ==================
 std::unique_ptr<SerialPortHandler> ComponentFactory::createSerialPortHandler(const SLTConfig& config) {
-    auto handler = std::make_unique<LinuxSerialPort>();
-    // 这里可以设置串口配置
-    // handler->setBaudRate(config.getBaudRate());
-    return handler;
+    if (config.isTcpMode()) {
+        std::cout << "[INFO] Using TCP mode: " << config.getTcpAddr()
+                  << ":" << config.getTcpPort() << std::endl;
+        return std::make_unique<TcpServerHandler>();
+    }
+    return std::make_unique<LinuxSerialPort>();
 }
 
 std::unique_ptr<LogProcessor> ComponentFactory::createLogProcessor(const SLTConfig& config) {
@@ -47,7 +51,7 @@ std::unique_ptr<SLTController> ComponentFactory::createController(const SLTConfi
     auto commandParser = createCommandParser();
     auto commandExecutor = createCommandExecutor();
     auto logProcessor = createLogProcessor(config);
-    
+
     // 创建控制器
     return std::make_unique<SLTController>(
         std::move(serialHandler),

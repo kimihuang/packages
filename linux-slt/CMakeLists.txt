@@ -38,6 +38,7 @@ add_library(slt_system SHARED
     src/match_result.cpp
     src/slt_command_parser.cpp
     src/linux_serial_port.cpp
+    src/tcp_server_handler.cpp
     src/system_command_executor.cpp
     src/pattern_log_processor.cpp
     src/slt_controller.cpp

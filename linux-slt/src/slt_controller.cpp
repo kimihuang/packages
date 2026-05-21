@@ -45,6 +45,40 @@ bool SLTController::start() {
     return true;
 }
 
+bool SLTController::start(const SLTConfig& config) {
+    if (isRunning_) {
+        lastError_ = "Controller is already running";
+        return false;
+    }
+
+    if (!serialHandler_) {
+        lastError_ = "Serial handler not initialized";
+        return false;
+    }
+
+    // 根据模式打开通信通道
+    if (config.isTcpMode()) {
+        std::string addr = config.getTcpAddr() + ":" + std::to_string(config.getTcpPort());
+        if (!serialHandler_->open(addr, 0)) {
+            lastError_ = "Failed to open TCP server: " + serialHandler_->getLastError();
+            return false;
+        }
+    } else {
+        if (!serialHandler_->open(config.getSerialPort(), config.getBaudRate())) {
+            lastError_ = "Failed to open serial port: " + serialHandler_->getLastError();
+            return false;
+        }
+    }
+
+    isRunning_ = true;
+    commandsProcessed_ = 0;
+    lastError_.clear();
+
+    std::cout << "[INFO] SLT Controller started ("
+              << (config.isTcpMode() ? "TCP" : "serial") << " mode)" << std::endl;
+    return true;
+}
+
 void SLTController::stop() {
     if (!isRunning_) {
         return;

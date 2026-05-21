@@ -26,11 +26,13 @@ void printUsage(const char* programName) {
     std::cout << "  -p, --port <端口>     串口设备 (默认: /dev/ttyUSB0)" << std::endl;
     std::cout << "  -b, --baud <波特率>   串口波特率 (默认: 115200)" << std::endl;
     std::cout << "  -l, --log <目录>      日志目录 (默认: /var/log/slt/)" << std::endl;
+    std::cout << "  --tcp <addr:port>     启用 TCP 模式 (如 0.0.0.0:9999)" << std::endl;
     std::cout << "  -h, --help            显示此帮助信息" << std::endl;
     std::cout << "  -v, --verbose         详细输出模式" << std::endl;
     std::cout << std::endl;
     std::cout << "示例:" << std::endl;
     std::cout << "  " << programName << " --port /dev/ttyS0 --baud 115200" << std::endl;
+    std::cout << "  " << programName << " --tcp 0.0.0.0:9999" << std::endl;
     std::cout << "  " << programName << " --config /etc/slt/config.yaml" << std::endl;
 }
 
@@ -77,6 +79,31 @@ bool parseCommandLine(int argc, char* argv[], slt::SLTConfig& config, bool& verb
                 config.setLogDirectory(argv[++i]);
             } else {
                 std::cerr << "[ERROR] --log 选项需要参数" << std::endl;
+                return false;
+            }
+        } else if (arg == "--tcp") {
+            if (i + 1 < argc) {
+                std::string tcpArg = argv[++i];
+                config.setTcpMode(true);
+                size_t colonPos = tcpArg.rfind(':');
+                if (colonPos != std::string::npos) {
+                    config.setTcpAddr(tcpArg.substr(0, colonPos));
+                    try {
+                        config.setTcpPort(std::stoi(tcpArg.substr(colonPos + 1)));
+                    } catch (...) {
+                        std::cerr << "[ERROR] 无效的TCP端口: " << tcpArg << std::endl;
+                        return false;
+                    }
+                } else {
+                    try {
+                        config.setTcpPort(std::stoi(tcpArg));
+                    } catch (...) {
+                        std::cerr << "[ERROR] 无效的TCP地址: " << tcpArg << std::endl;
+                        return false;
+                    }
+                }
+            } else {
+                std::cerr << "[ERROR] --tcp 选项需要参数 (如 0.0.0.0:9999)" << std::endl;
                 return false;
             }
         } else {
@@ -140,6 +167,12 @@ int main(int argc, char* argv[]) {
         std::cout << "  日志目录: " << config.getLogDirectory() << std::endl;
         std::cout << "  默认超时: " << config.getDefaultTimeout() << "ms" << std::endl;
         std::cout << "  最大命令大小: " << config.getMaxCommandSize() << "字节" << std::endl;
+        if (config.isTcpMode()) {
+            std::cout << "  通信模式: TCP" << std::endl;
+            std::cout << "  TCP地址: " << config.getTcpAddr() << ":" << config.getTcpPort() << std::endl;
+        } else {
+            std::cout << "  通信模式: 串口" << std::endl;
+        }
     }
     
     try {
@@ -151,7 +184,7 @@ int main(int argc, char* argv[]) {
         }
         
         // 启动控制器
-        if (!controller->start()) {
+        if (!controller->start(config)) {
             std::cerr << "[ERROR] 无法启动控制器: " << controller->getLastError() << std::endl;
             return 1;
         }
