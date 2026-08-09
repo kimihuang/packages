@@ -1,0 +1,139 @@
+{
+    "_comment": "============================================",
+    "_description": "启动各阶段自动运行框架 - RTTHREAD阶段配置",
+    "_version": "1.0.0",
+    "_author": "AutoRun Framework",
+    "============================================": "",
+    "config_meta": {
+        "version": 1,
+        "magic": "0xA55A5AA5",
+        "description": "SoC启动自动化测试 - RTTHREAD阶段配置",
+        "created_time": "2026-01-01T00:00:00Z",
+        "modified_time": "2026-01-01T00:00:00Z",
+        "creator": "test_engineer",
+        "target_soc": "MySOC-1000"
+    },
+    "global_config": {
+        "log_level": 3,
+        "_log_level_desc": "0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG",
+        "global_timeout_s": 300,
+        "_timeout_desc": "全局超时时间(秒), 0表示无限制",
+        "continue_on_error": false,
+        "_continue_desc": "非关键任务失败时是否继续执行后续任务",
+        "result_output_addr": "0x12340000",
+        "_result_addr_desc": "结果输出内存地址(物理地址)",
+        "result_max_size": 8192,
+        "_result_size_desc": "结果区域最大大小(bytes)",
+        "halt_on_completion": false,
+        "_halt_desc": "全部任务完成后是否停机/进入死循环(便于读取结果)"
+    },
+    "stages": {
+        "rtthread": {
+            "enabled": true,
+            "_stage_desc": "RT-Thread阶段: 外设驱动验证、基本功能测试",
+            "execution_order": 3,
+            "tasks": [
+                {
+                    "id": 2000,
+                    "name": "i2c_bus_scan",
+                    "command": "i2c scan bus 0",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 2000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "regex",
+                        "pattern": "device@0x[0-9A-Fa-f]{2}"
+                    },
+                    "log_output": true,
+                    "_desc": "I2C总线扫描, 应发现至少一个设备"
+                },
+                {
+                    "id": 2001,
+                    "name": "spi_flash_id_read",
+                    "command": "spi flash read_id --cs 0",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 3000,
+                    "retry_count": 2,
+                    "retry_delay_ms": 500,
+                    "expected_result": {
+                        "type": "string_match",
+                        "pattern": "Flash ID: 0x"
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 2002,
+                    "name": "sdcard_mount_test",
+                    "command": "sd mount 0 && sd read --block 0 --count 1",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 1000,
+                    "expected_result": {
+                        "type": "json_output",
+                        "check_keys": [
+                            "status",
+                            "block_size"
+                        ],
+                        "key_values": {
+                            "status": "success"
+                        }
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 2003,
+                    "name": "gpio_toggle_test",
+                    "command": "gpio test toggle --pin PA0 --count 100 --freq 1000",
+                    "enabled": false,
+                    "_disabled_reason": "需要外部逻辑分析仪观测, 自动化环境暂不支持",
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true
+                }
+            ]
+        }
+    },
+    "custom_properties": {
+        "project_name": "MySOC_FullBootTest_v1.2",
+        "test_environment": "EVT Board Rev1.0",
+        "firmware_versions": {
+            "bl1": "v1.0.3",
+            "bl31": "v2.1.0",
+            "rtthread": "v4.0.2",
+            "uboot": "2021.10-custom",
+            "linux": "5.15.62-lts"
+        },
+        "hardware_config": {
+            "ddr_size": "2GB",
+            "ddr_type": "LPDDR4X-3200",
+            "emmc_size": "64GB",
+            "display": "1920x1080@60Hz",
+            "network": "1Gbps Ethernet + WiFi6"
+        },
+        "notification": {
+            "on_complete": {
+                "method": "gpio_pulse",
+                "pin": "PA15",
+                "duration_ms": 100,
+                "_desc": "测试完成后通过GPIO脉冲通知外部设备"
+            },
+            "on_failure": {
+                "method": "uart_message",
+                "message_pattern": "[AUTORUN_FAIL] task_id=%d task_name=%s error_code=%d"
+            }
+        },
+        "current_stage": "rtthread",
+        "stage_description": "RT-Thread阶段: 外设驱动验证、基本功能测试"
+    }
+}

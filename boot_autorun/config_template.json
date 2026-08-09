@@ -1,0 +1,449 @@
+{
+    "_comment": "============================================",
+    "_description": "启动各阶段自动运行框架 - JSON配置模板",
+    "_version": "1.0.0",
+    "_author": "AutoRun Framework",
+    "============================================": "",
+    "config_meta": {
+        "version": 1,
+        "magic": "0xA55A5AA5",
+        "description": "SoC启动全流程自动化测试配置",
+        "created_time": "2026-01-01T00:00:00Z",
+        "modified_time": "2026-01-01T00:00:00Z",
+        "creator": "test_engineer",
+        "target_soc": "MySOC-1000"
+    },
+    "global_config": {
+        "log_level": 3,
+        "_log_level_desc": "0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG",
+        "global_timeout_s": 300,
+        "_timeout_desc": "全局超时时间(秒), 0表示无限制",
+        "continue_on_error": false,
+        "_continue_desc": "非关键任务失败时是否继续执行后续任务",
+        "result_output_addr": "0x12340000",
+        "_result_addr_desc": "结果输出内存地址(物理地址)",
+        "result_max_size": 8192,
+        "_result_size_desc": "结果区域最大大小(bytes)",
+        "halt_on_completion": false,
+        "_halt_desc": "全部任务完成后是否停机/进入死循环(便于读取结果)"
+    },
+    "stages": {
+        "bl1": {
+            "enabled": true,
+            "_stage_desc": "BL1阶段: 初始化DDR、时钟、基本外设",
+            "execution_order": 1,
+            "tasks": [
+                {
+                    "id": 0,
+                    "name": "ddr_init_and_test",
+                    "command": "ddr init --speed 3200 --size 2G && ddr quick_test --pattern 0xA5A5A5A5",
+                    "enabled": true,
+                    "critical": true,
+                    "_critical_desc": "关键任务: 失败则终止整个阶段",
+                    "timeout_ms": 10000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 1000,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true,
+                    "_log_desc": "是否记录命令输出到日志"
+                },
+                {
+                    "id": 1,
+                    "name": "uart_loopback_test",
+                    "command": "uart test loopback --baud 115200 --data \"Hello BL1\"",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "string_match",
+                        "pattern": "UART LOOPBACK OK"
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 2,
+                    "name": "pmic_status_check",
+                    "command": "pmic status --check voltage core,rail",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 3000,
+                    "retry_count": 2,
+                    "retry_delay_ms": 500,
+                    "expected_result": {
+                        "type": "regex",
+                        "pattern": "voltage.*core.*\\d+\\.\\d+V.*OK|PASS"
+                    },
+                    "log_output": true
+                }
+            ]
+        },
+        "bl31": {
+            "enabled": true,
+            "_stage_desc": "BL31阶段: 安全监控、PSCI、SMC调用测试",
+            "execution_order": 2,
+            "tasks": [
+                {
+                    "id": 1000,
+                    "name": "psci_version_check",
+                    "command": "smc_call 0x84000000",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 2000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "range",
+                        "min_val": 0,
+                        "max_val": 2
+                    },
+                    "log_output": true,
+                    "_desc": "PSCI版本检查, 返回值应在0-2范围"
+                },
+                {
+                    "id": 1001,
+                    "name": "smc_cpu_on_test",
+                    "command": "smc_cpu_on --cpu_id 1 --entry_addr 0x80000",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 1000,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 1002,
+                    "name": "trustzone_register_check",
+                    "command": "tz_check --scr_el3 --sctlr_el3",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 3000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "checksum",
+                        "algorithm": "crc32",
+                        "expected_value": "0xDEADBEEF"
+                    },
+                    "log_output": true
+                }
+            ]
+        },
+        "rtthread": {
+            "enabled": true,
+            "_stage_desc": "RT-Thread阶段: 外设驱动验证、基本功能测试",
+            "execution_order": 3,
+            "tasks": [
+                {
+                    "id": 2000,
+                    "name": "i2c_bus_scan",
+                    "command": "i2c scan bus 0",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 2000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "regex",
+                        "pattern": "device@0x[0-9A-Fa-f]{2}"
+                    },
+                    "log_output": true,
+                    "_desc": "I2C总线扫描, 应发现至少一个设备"
+                },
+                {
+                    "id": 2001,
+                    "name": "spi_flash_id_read",
+                    "command": "spi flash read_id --cs 0",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 3000,
+                    "retry_count": 2,
+                    "retry_delay_ms": 500,
+                    "expected_result": {
+                        "type": "string_match",
+                        "pattern": "Flash ID: 0x"
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 2002,
+                    "name": "sdcard_mount_test",
+                    "command": "sd mount 0 && sd read --block 0 --count 1",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 1000,
+                    "expected_result": {
+                        "type": "json_output",
+                        "check_keys": [
+                            "status",
+                            "block_size"
+                        ],
+                        "key_values": {
+                            "status": "success"
+                        }
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 2003,
+                    "name": "gpio_toggle_test",
+                    "command": "gpio test toggle --pin PA0 --count 100 --freq 1000",
+                    "enabled": false,
+                    "_disabled_reason": "需要外部逻辑分析仪观测, 自动化环境暂不支持",
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true
+                }
+            ]
+        },
+        "uboot": {
+            "enabled": true,
+            "_stage_desc": "U-Boot阶段: 网络启动、存储、显示等子系统测试",
+            "execution_order": 4,
+            "tasks": [
+                {
+                    "id": 3000,
+                    "name": "network_dhcp_test",
+                    "command": "dhcp && ping 192.168.1.1",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 15000,
+                    "retry_count": 2,
+                    "retry_delay_ms": 2000,
+                    "expected_result": {
+                        "type": "string_match",
+                        "pattern": "host is alive"
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 3001,
+                    "name": "emmc_partition_read",
+                    "command": "mmc dev 0 && mmc read 0x10000000 0x0 0x100",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 10000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 1000,
+                    "expected_result": {
+                        "type": "checksum",
+                        "algorithm": "crc32",
+                        "expected_value": "0x12345678"
+                    },
+                    "log_output": true,
+                    "_desc": "读取eMMC引导分区并校验"
+                },
+                {
+                    "id": 3002,
+                    "name": "display_framebuffer_test",
+                    "command": "fb init 1920x1080@60 && fb fill 0xFF0000 && fb screenshot /tmp/fb_test.bmp",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 8000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 3003,
+                    "name": "usb_device_enum_test",
+                    "command": "usb start 0 && usb tree",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 10000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 2000,
+                    "expected_result": {
+                        "type": "regex",
+                        "pattern": "USB Device.*[Ee]numerated|Found"
+                    },
+                    "log_output": true
+                }
+            ]
+        },
+        "linux": {
+            "enabled": true,
+            "_stage_desc": "Linux阶段: 完整系统功能、性能、压力测试",
+            "execution_order": 5,
+            "pre_commands": [
+                "mount -t tmpfs tmpfs /tmp",
+                "mkdir -p /var/log/autorun",
+                "dmesg -C > /dev/null"
+            ],
+            "_pre_cmd_desc": "阶段开始前执行的准备命令",
+            "post_commands": [
+                "sync",
+                "echo 'Linux stage completed' >> /var/log/autorun/status.log"
+            ],
+            "_post_cmd_desc": "阶段结束后执行的清理命令",
+            "tasks": [
+                {
+                    "id": 4000,
+                    "name": "memory_stress_test",
+                    "command": "/usr/bin/memtester 256M 2>&1 | tee /var/log/autorun/memtest.log",
+                    "enabled": true,
+                    "critical": true,
+                    "timeout_ms": 120000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "json_output",
+                        "check_keys": [
+                            "total_tests",
+                            "passed",
+                            "failed"
+                        ],
+                        "conditions": {
+                            "failed": {
+                                "op": "==",
+                                "value": 0
+                            }
+                        }
+                    },
+                    "log_output": true,
+                    "env_vars": {
+                        "MEMTESTER_VERBOSE": "1"
+                    }
+                },
+                {
+                    "id": 4001,
+                    "name": "storage_io_benchmark",
+                    "command": "/usr/bin/fio --name=seq_write --filename=/dev/mmcblk0p1 --bs=1M --size=100M --rw=write --output-format=json 2>/dev/null",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 60000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 3000,
+                    "expected_result": {
+                        "type": "json_output",
+                        "check_keys": [
+                            "jobs",
+                            "write",
+                            "io_bytes"
+                        ],
+                        "conditions": {
+                            "write.iops": {
+                                ">=": 1000
+                            }
+                        }
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 4002,
+                    "name": "network_throughput_test",
+                    "command": "/usr/bin/iperf3 -c 192.168.1.100 -t 10 -J 2>/dev/null",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 30000,
+                    "retry_count": 2,
+                    "retry_delay_ms": 2000,
+                    "expected_result": {
+                        "type": "range",
+                        "min_val": 900,
+                        "max_val": 100000
+                    },
+                    "log_output": true,
+                    "_desc": "网络吞吐量测试(Mbps), 根据接口类型调整范围"
+                },
+                {
+                    "id": 4003,
+                    "name": "kernel_module_load_test",
+                    "command": "modprobe my_custom_driver && lsmod | grep my_custom_driver && rmmod my_custom_driver",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 5000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "return_code",
+                        "value": 0
+                    },
+                    "log_output": true
+                },
+                {
+                    "id": 4004,
+                    "name": "thermal_sensor_read",
+                    "command": "cat /sys/class/thermal/thermal_zone0/temp && cat /sys/class/hwmon/hwmon0/temp1_input",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 2000,
+                    "retry_count": 0,
+                    "retry_delay_ms": 0,
+                    "expected_result": {
+                        "type": "regex",
+                        "pattern": "\\d{4,5}\\n\\d{5,6}"
+                    },
+                    "log_output": true,
+                    "_desc": "温度传感器读数应在合理范围内(m°C)"
+                },
+                {
+                    "id": 4005,
+                    "name": "gpu_render_test",
+                    "command": "/usr/bin/gles2_triangle --width 800 --height 600 --frames 100 --output /tmp/gpu_test.raw",
+                    "enabled": true,
+                    "critical": false,
+                    "timeout_ms": 30000,
+                    "retry_count": 1,
+                    "retry_delay_ms": 2000,
+                    "expected_result": {
+                        "type": "checksum",
+                        "algorithm": "crc32",
+                        "expected_value": "0xABCDEF01"
+                    },
+                    "log_output": true
+                }
+            ]
+        }
+    },
+    "custom_properties": {
+        "project_name": "MySOC_FullBootTest_v1.2",
+        "test_environment": "EVT Board Rev1.0",
+        "firmware_versions": {
+            "bl1": "v1.0.3",
+            "bl31": "v2.1.0",
+            "rtthread": "v4.0.2",
+            "uboot": "2021.10-custom",
+            "linux": "5.15.62-lts"
+        },
+        "hardware_config": {
+            "ddr_size": "2GB",
+            "ddr_type": "LPDDR4X-3200",
+            "emmc_size": "64GB",
+            "display": "1920x1080@60Hz",
+            "network": "1Gbps Ethernet + WiFi6"
+        },
+        "notification": {
+            "on_complete": {
+                "method": "gpio_pulse",
+                "pin": "PA15",
+                "duration_ms": 100,
+                "_desc": "测试完成后通过GPIO脉冲通知外部设备"
+            },
+            "on_failure": {
+                "method": "uart_message",
+                "message_pattern": "[AUTORUN_FAIL] task_id=%d task_name=%s error_code=%d"
+            }
+        }
+    }
+}
