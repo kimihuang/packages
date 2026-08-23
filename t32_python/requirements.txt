@@ -1,0 +1,13 @@
+# TRACE32 Python 自动化工程依赖
+#
+# 安装步骤：
+#
+# 1) PYRCL（lauterbach.trace32.rcl）——本地 wheel，随 TRACE32 安装提供，
+#    位于 <T32SYS>/demo/api/python/rcl/dist/：
+#       python -m pip install ./lauterbach_trace32_rcl-latest-py3-none-any.whl
+#    权限不足时：
+#       python -m pip install --user ./lauterbach_trace32_rcl-latest-py3-none-any.whl
+#
+# 2) pytest 系（PyPI）：
+pytest
+pytest-timeout
