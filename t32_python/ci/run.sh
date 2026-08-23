@@ -1,19 +1,46 @@
 #!/usr/bin/env bash
-# 运行 pytest 冒烟测试并生成 JUnit XML 与 HTML 报告。
+# 读 ci_testcase_seq.json 按声明顺序跑测试，生成 JUnit XML + HTML 报告。
 #
-# 用法（先确保 TRACE32 已启动并开启 Remote API 端口）:
-#   ./ci/start_sim.sh   # 模拟器场景：拉起模拟器并等待端口
-#   ./ci/run.sh         # 跑测试
+# 用法（先启动模拟器）:
+#   ./ci/start.sh --env sim_board
+#   ./ci/run.sh --env sim_board [--module cpu] [--case smoke]
 #
 # 环境变量:
-#   T32_TARGET  sim | hw（默认 sim）
-#   T32_NODE / T32_PORT / T32_CPU / T32_RAM_ADDR
+#   T32_VENV   .venv 路径（默认用 PATH 中的 pytest）
 set -euo pipefail
 
-export T32_TARGET="${T32_TARGET:-sim}"
-export T32_NODE="${T32_NODE:-localhost}"
-export T32_PORT="${T32_PORT:-20000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/lib.sh"
 
-cd "$(dirname "$0")/.."
+parse_args "$@"
 
-pytest -q --junitxml=report.xml --html=report.html --self-contained-html --timeout=300 tests/
+export T32_ENV="$ENV"
+
+# 定位 pytest
+if [[ -n "${T32_VENV:-}" ]]; then
+    PYTEST=( "$T32_VENV/bin/python3" -m pytest )
+elif command -v pytest >/dev/null 2>&1; then
+    PYTEST=( pytest )
+else
+    echo "ERROR: 找不到 pytest，请设置 T32_VENV 或安装 pytest" >&2
+    exit 1
+fi
+
+PYTEST_ARGS=( -q --junitxml="report_${ENV}.xml" --html="report_${ENV}.html" --self-contained-html --timeout=600 )
+
+# --module 过滤功能子目录（case id 形如 "<module>/<name>"，用 "<module>/" 前缀匹配）
+# --case 过滤单条 case（-k 子串匹配）
+FILTER=""
+if [[ -n "$MODULE" ]]; then
+    FILTER="$MODULE/"
+fi
+if [[ -n "$CASE_FILTER" ]]; then
+    FILTER="${FILTER}${CASE_FILTER}"
+fi
+if [[ -n "$FILTER" ]]; then
+    PYTEST_ARGS+=( -k "$FILTER" )
+fi
+
+# 只收集 case 入口（test_cases.py）
+"${PYTEST[@]}" "${PYTEST_ARGS[@]}" test_cases.py

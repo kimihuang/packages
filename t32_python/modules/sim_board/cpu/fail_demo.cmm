@@ -1,0 +1,6 @@
+; fail_demo.cmm —— 失败检测示例（故意失败，用于验证框架 pass/fail 判定）
+;
+; 本 case 故意执行 PRINT %ERROR，验证框架能正确判 fail。
+; 日常 CI 应删除或移出，避免全量跑时恒失败。
+PRINT %ERROR "fail_demo: intentional failure for verification"
+ENDDO

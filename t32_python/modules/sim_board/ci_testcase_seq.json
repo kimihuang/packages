@@ -1,0 +1,38 @@
+{
+  "testcases": [
+    {
+      "script": "cpu/smoke.cmm",
+      "name": "冒烟测试：写内存读回校验",
+      "timeout_ms": 10000,
+      "enabled": true,
+      "critical": true,
+      "retry_count": 0,
+      "retry_delay_ms": 0
+    },
+    {
+      "script": "cpu/memory_check.py",
+      "name": "内存读写校验",
+      "timeout_ms": 5000,
+      "enabled": true,
+      "critical": false,
+      "retry_count": 0,
+      "retry_delay_ms": 0
+    },
+    {
+      "script": "cpu/fail_demo.cmm",
+      "name": "失败示例(cmm)",
+      "enabled": true,
+      "critical": true,
+      "retry_count": 1,
+      "retry_delay_ms": 100
+    },
+    {
+      "script": "cpu/fail_demo.py",
+      "name": "失败示例(py)",
+      "enabled": true,
+      "critical": false,
+      "retry_count": 0,
+      "retry_delay_ms": 0
+    }
+  ]
+}

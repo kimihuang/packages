@@ -1,0 +1,13 @@
+{
+  "testcases": [
+    {
+      "script": "soc/ddr_init.cmm",
+      "name": "DDR 控制器初始化",
+      "timeout_ms": 30000,
+      "enabled": true,
+      "critical": true,
+      "retry_count": 0,
+      "retry_delay_ms": 0
+    }
+  ]
+}

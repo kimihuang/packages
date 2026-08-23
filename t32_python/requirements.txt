@@ -3,10 +3,10 @@
 # 安装步骤：
 #
 # 1) PYRCL（lauterbach.trace32.rcl）——本地 wheel，随 TRACE32 安装提供，
-#    位于 <T32SYS>/demo/api/python/rcl/dist/：
-#       python -m pip install ./lauterbach_trace32_rcl-latest-py3-none-any.whl
+#    位于 <T32SYS>/demo/api/python/rcl/dist/，本项目已放置到 tools/ 目录：
+#       python -m pip install ./tools/lauterbach_trace32_rcl-1.0.7-py3-none-any.whl
 #    权限不足时：
-#       python -m pip install --user ./lauterbach_trace32_rcl-latest-py3-none-any.whl
+#       python -m pip install --user ./tools/lauterbach_trace32_rcl-1.0.7-py3-none-any.whl
 #
 # 2) pytest 系（PyPI）：
 pytest

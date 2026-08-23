@@ -1,0 +1,36 @@
+; ddr_init.cmm —— DDR 控制器初始化（真实寄存器配置序列示例）
+;
+; 展示芯片调试的典型寄存器操作模式：
+;   写寄存器 → 延时 → 读改写（RMW）→ 读回校验
+;
+; 注意：寄存器地址为示例，实际使用时替换为目标 SoC 的真实 DDR 控制器地址。
+
+; ---- 1. 软复位 DDR 控制器 ----
+Data.Set A:0xFD000000 %Long 0x00000001    ; DDRC_CTRL = 0x1（软复位）
+
+; ---- 2. 配置时序参数 ----
+Data.Set A:0xFD000100 %Long 0x00000114    ; DDRC_TIMING0: tCL/tRCD/tRP
+Data.Set A:0xFD000104 %Long 0x00000804    ; DDRC_TIMING1: tRAS/tRC
+
+; ---- 3. 配置 DRAM 类型与 rank ----
+Data.Set A:0xFD000108 %Long 0x00000022    ; DDRC_MSTR: LPDDR4 / 2 ranks
+
+; ---- 4. 等待复位生效 ----
+WAIT 1.ms
+
+; ---- 5. 读改写（RMW）：解除软复位，保留其他位 ----
+&val=Data.Long(A:0xFD000000)
+Data.Set A:0xFD000000 %Long &val&~0x1      ; 清除 bit0（解除软复位）
+
+; ---- 6. 延时等待控制器初始化完成 ----
+WAIT 10.ms
+
+; ---- 7. 读回校验：确认控制器就绪（bit0 = 1 表示 ready） ----
+IF Data.Long(A:0xFD000008)&0x1
+(
+    PRINT "DDR controller ready"
+)
+ELSE
+(
+    PRINT %ERROR "DDR controller init failed"
+)

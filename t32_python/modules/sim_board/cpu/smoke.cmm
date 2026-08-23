@@ -1,0 +1,13 @@
+; smoke.cmm —— 冒烟示例：写内存并读回校验
+Data.Set D:0x20000000 %Long 0x12345678
+Data.Set D:0x20000004 %Long 0xDEADBEEF
+
+; 读回校验：失败时用 PRINT %ERROR 表达（框架据此判 fail）
+IF Data.Long(D:0x20000000)==0x12345678
+(
+    PRINT "smoke case done"
+)
+ELSE
+(
+    PRINT %ERROR "smoke verify failed: memory mismatch"
+)
