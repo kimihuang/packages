@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config IPI_MONITOR
+	tristate "IPI Monitor Driver"
+	depends on ARM64 && SMP
+	default m
+	help
+	  This driver provides per-core health monitoring based on
+	  IPI (Inter-Processor Interrupt) round-robin heartbeat.
+
+	  A monitor kernel thread bound to a configurable CPU periodically
+	  sends asynchronous IPIs to all other online CPUs. Each target CPU
+	  increments its own heartbeat counter in the IPI callback. The
+	  monitor thread detects stalled or unresponsive cores by checking
+	  whether the counters keep advancing.
+
+	  Say M to build this as a loadable kernel module.

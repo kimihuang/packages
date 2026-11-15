@@ -1,0 +1,46 @@
+; ============================================================================
+; save_ramdump.cmm — 封装官方 ramdump.cmm（命令行非交互模式）
+;
+; 生成 OS RAM dump：保存内存段、各核寄存器、MMU 翻译、内核符号，
+; 并生成一个 restore_<timestamp>.cmm 用于在 SIM 里还原现场。
+;
+; 复用官方脚本（不拷贝）：
+;   ~~/demo/arm/kernel/linux/awareness/ramdump.cmm
+; 官方命令行参数（见其 parseArguments）：
+;   MEM="..."         内存范围，支持 "A:0x80000000++0x1fffffff" 或
+;                     占位符 "<symbol.list.section>"（保存所有已加载 section）
+;   SYMBOLFILE="..."  内核符号文件（vmlinux）
+;   TRACESAVE=0/1     是否保存 flowtrace
+;   STOREFORMAT=0/1   0=binary, 1=S3Record
+;
+; 用法：
+;   DO tools/panic/save_ramdump.cmm                          ; 用默认值
+;   DO tools/panic/save_ramdump.cmm "A:0x80000000++0x1fffffff"  ; 指定内存范围
+;
+; 生成产物位于 &STB_OUT_DIR（config.cmm，默认 ./ramdump）。
+; ============================================================================
+
+PRIVATE &sMem &sSym
+ENTRY &sMem &sSym
+
+DO ~~~~/../common/config.cmm
+
+IF "&sMem"==""
+  &sMem = "<symbol.list.section>"
+IF "&sSym"==""
+  &sSym = "&STB_VMLINUX"
+
+; 切到输出目录（ramdump.cmm 生成文件到 ./）
+IF OS.DIR("&STB_OUT_DIR")
+(
+  CD "&STB_OUT_DIR"
+)
+ELSE
+(
+  PRINT %ERROR "输出目录不存在: &STB_OUT_DIR（请先创建）"
+  ENDDO
+)
+
+DO "&STB_T32_DEMO/awareness/ramdump.cmm" MEM="&sMem" SYMBOLFILE="&sSym" TRACESAVE=0 STOREFORMAT=0
+
+ENDDO

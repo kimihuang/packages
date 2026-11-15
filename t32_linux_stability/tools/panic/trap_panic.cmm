@@ -1,0 +1,52 @@
+; ============================================================================
+; trap_panic.cmm — 断内核 panic / oops 入口（无副作用，只设断点）
+;
+; 在 panic() / die() / __do_kernel_fault() 入口设置断点，
+; 目标继续运行后一旦发生 panic/oops 即停在此处。
+;
+; 用法：
+;   DO tools/panic/trap_panic.cmm   ; 设断点（需目标停止）
+;   Go                                ; 继续运行，等待命中
+;
+; 命中后建议：
+;   DO tools/panic/save_ramdump.cmm ; 保存现场
+; ============================================================================
+
+PRIVATE &p
+DO ~~~~/../common/config.cmm
+
+IF STATE.RUN()
+(
+  PRINT %ERROR "目标正在运行，请先 Break 停止再设断点"
+  ENDDO
+)
+
+; 内核 panic 入口
+IF sYmbol.EXIST(panic)
+(
+  &p = sYmbol.BEGIN(panic)
+  Break.Set &p
+  PRINT "断点: panic @ &p"
+)
+ELSE
+(
+  PRINT %ERROR "符号 panic 不存在（内核符号是否已加载?）"
+)
+
+; 内核 oops / die 入口
+IF sYmbol.EXIST(die)
+(
+  &p = sYmbol.BEGIN(die)
+  Break.Set &p
+  PRINT "断点: die @ &p"
+)
+
+; 内核态 fault 上报（arm64 关键路径，见官方 segv.cmm）
+IF sYmbol.EXIST(__do_kernel_fault)
+(
+  &p = sYmbol.BEGIN(__do_kernel_fault)
+  Break.Set &p
+  PRINT "断点: __do_kernel_fault @ &p"
+)
+
+ENDDO

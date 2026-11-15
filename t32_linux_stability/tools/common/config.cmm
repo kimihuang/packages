@@ -1,0 +1,28 @@
+; ============================================================================
+; config.cmm — 全局路径配置（GLOBAL 变量）
+;
+; 所有工具脚本 / case 脚本开头 DO 本文件，即可使用下面的 GLOBAL 变量。
+; 换环境 / 换内核版本 / 换真机时，【只改这个文件】，其余脚本无需改动。
+;
+; 注意：
+;   - 本文件是「库脚本」，没有 ENTRY，被 DO 调用后直接赋值并结束。
+;   - `~~` 是 TRACE32 安装根（本例即 /home/lion/t32/）。
+; ============================================================================
+
+GLOBAL &STB_T32_DEMO      ; TRACE32 Linux demo 根目录
+GLOBAL &STB_VMLINUX       ; 内核镜像（带 debug_info，未 strip）
+GLOBAL &STB_DTB           ; 设备树
+GLOBAL &STB_ROOTFS        ; ramdisk（rootfs.ext4）
+GLOBAL &STB_AWARENESS     ; Linux awareness 扩展（linux.t32）
+GLOBAL &STB_CPU_TYPE      ; 目标 CPU 类型
+GLOBAL &STB_OUT_DIR       ; 现场落盘目录（ramdump / core 等）
+
+&STB_T32_DEMO = "~~/demo/arm/kernel/linux"
+&STB_VMLINUX   = "&STB_T32_DEMO/board/simulator/armv8/kernel/vmlinux"
+&STB_DTB       = "&STB_T32_DEMO/board/simulator/armv8/kernel/trace32_simulator.dtb"
+&STB_ROOTFS    = "&STB_T32_DEMO/board/simulator/armv8/ramdisk/rootfs.ext4"
+&STB_AWARENESS = "&STB_T32_DEMO/awareness/linux.t32"
+&STB_CPU_TYPE  = "CortexA53"
+&STB_OUT_DIR   = "./ramdump"
+
+ENDDO

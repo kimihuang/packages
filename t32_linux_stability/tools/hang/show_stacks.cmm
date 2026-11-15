@@ -1,0 +1,33 @@
+; ============================================================================
+; show_stacks.cmm — hang/死锁初查：遍历所有 CPU 核打印 PC + 线程列表
+;
+; hang 分析的第一步：看每个 CPU 核停在哪、各线程处于什么状态。
+; 本脚本只读（不设断点、不修改现场）。
+;
+; 用法：
+;   DO tools/hang/show_stacks.cmm
+;
+; 说明：
+;   - 打印每个核的 PC（当前执行位置），用于判断是否卡在 spinlock/死循环
+;   - TASK.PS.THREADS 列出线程状态（依赖 Linux awareness 已配置）
+;   - 如需每个核的完整调用栈，交互式下对目标核执行 Frame.View 查看
+; ============================================================================
+
+DO ~~~~/../common/config.cmm
+
+PRIVATE &n
+&n = 0.
+RePeaT CORE.NUMBER()
+(
+  CORE.select &n
+  PRINT "===== CPU &n ====="
+  PRINT "PC=" Register(PC)
+  &n = &n + 1.
+)
+CORE.select 0.
+
+PRINT ""
+PRINT "===== 线程列表 (TASK.PS.THREADS) ====="
+TASK.PS.THREADS
+
+ENDDO

@@ -1,0 +1,51 @@
+; ============================================================================
+; inject_panic.cmm — 流程模板：触发 panic 并验证「断点命中 + 现场保存」链路
+;
+; 完整链路：
+;   setup → boot → trap_panic（设断点）→ 触发 panic → Go → 命中 → save_ramdump
+;
+; 注意：本脚本是【流程模板】，「触发 panic」这一动作因目标而异，需人工配合：
+;   1) SIM + DCC 终端：在 TERM 窗口执行  echo c > /proc/sysrq-trigger
+;   2) 目标侧运行一个会 panic 的测试程序
+;   3) 真机：通过外部手段注入故障
+;
+; pass/fail 约定（遵循 t32_python）：命中 panic 断点并保存现场 = pass。
+; ============================================================================
+
+DO ~~~~/../env/sim_armv8_setup.cmm
+
+PRINT "启动 Linux ..."
+Go
+WAIT 15.s
+Break
+
+; 设 panic 断点
+DO ~~~~/../tools/panic/trap_panic.cmm
+
+; 触发 panic（人工步骤，见文件头注释）
+PRINT "请在 DCC 终端执行: echo c > /proc/sysrq-trigger  触发 panic"
+
+Go
+
+; 等待 panic 命中（轮询一段时间后停止）
+WAIT 30.s
+Break
+
+IF sYmbol.EXIST(panic)
+(
+  IF Register(PC)==ADDRESS.OFFSET(sYmbol.BEGIN(panic))
+  (
+    PRINT "命中 panic 断点，保存现场 ..."
+    DO ~~~~/../tools/panic/save_ramdump.cmm
+  )
+  ELSE
+  (
+    PRINT %ERROR "未命中 panic 断点，当前 PC=" Register(PC)
+  )
+)
+ELSE
+(
+  PRINT %ERROR "符号 panic 不存在"
+)
+
+ENDDO

@@ -1,0 +1,15 @@
+# SConscript - ulog 墙钟时间戳接入示例
+#
+# 依赖 time_sync 组件（PKG_USING_TIME_SYNC）与 ulog（RT_USING_ULOG）。
+
+from building import *
+
+cwd  = GetCurrentDir()
+src  = Glob('*.c')
+path = [cwd]
+
+group = DefineGroup('UlognTimeSyncDemo', src,
+                   depend = ['PKG_USING_TIME_SYNC', 'PKG_USING_ULOG_TIME_SYNC_DEMO'],
+                   CPPPATH = path)
+
+Return('group')

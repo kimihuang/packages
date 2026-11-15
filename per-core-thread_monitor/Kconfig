@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config PER_CORE_HEARTBEAT
+	tristate "Per-Core Thread Heartbeat Driver"
+	depends on ARM64 && SMP
+	default m
+	help
+	  This driver provides per-core scheduling liveness monitoring based on
+	  bound kernel threads.
+
+	  Each target CPU runs a bound heartbeat kernel thread that periodically
+	  increments its own heartbeat counter. A monitor thread detects
+	  soft-deadlocked (or scheduling-starved) cores by checking whether the
+	  counters keep advancing.
+
+	  This complements the IPI Monitor driver (ipi_monitor) to cover soft
+	  lockups (L1) that IPI-based detection cannot distinguish.
+
+	  Say M to build this as a loadable kernel module.

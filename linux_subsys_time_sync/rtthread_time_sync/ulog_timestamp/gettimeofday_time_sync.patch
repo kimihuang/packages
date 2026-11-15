@@ -1,0 +1,46 @@
+From: time_sync integration
+Subject: [PATCH] libc: gettimeofday() fallback to cross-core time sync anchor
+
+在 gettimeofday() 中增加回退：RTC 读取失败后，从跨核时间同步锚点
+（Linux 大核经 NTP 校准的墙钟广播到共享内存）读取墙钟，使 ulog 的
+ULOG_TIME_USING_TIMESTAMP 路径能输出与 Linux 对齐的墙钟时间戳。
+
+依赖 time_sync 组件（PKG_USING_TIME_SYNC），以及其中的
+time_sync_get_wallclock_sec_us() 接口。
+
+diff --git a/components/libc/compilers/common/ctime.c b/components/libc/compilers/common/ctime.c
+--- a/components/libc/compilers/common/ctime.c
++++ b/components/libc/compilers/common/ctime.c
+@@ -35,6 +35,9 @@
+ #include <rtdevice.h>
+ #endif /* RT_USING_RTC */
+ #include <sys/errno.h>
+ #include <unistd.h>
++#ifdef PKG_USING_TIME_SYNC
++#include <time_sync.h>
++#endif /* PKG_USING_TIME_SYNC */
+ #ifdef RT_USING_SMART
+ #include <lwp.h>
+@@ -501,6 +504,22 @@
+     }
+ #endif /* RT_USING_RTC */
+ 
++    /* 回退到跨核时间同步锚点（与 Linux 墙钟对齐） */
++#ifdef PKG_USING_TIME_SYNC
++    if (tv != RT_NULL)
++    {
++        rt_uint64_t sec;
++        rt_uint32_t usec;
++
++        if (time_sync_get_wallclock_sec_us(&sec, &usec) == 0)
++        {
++            tv->tv_sec  = (time_t)sec;
++            tv->tv_usec = (suseconds_t)usec;
++            return 0;
++        }
++    }
++#endif /* PKG_USING_TIME_SYNC */
++
+     rt_set_errno(EINVAL);
+     return -1;
+ }

@@ -1,0 +1,15 @@
+# SConscript - 跨核时间同步锚点对读取组件（RT-Thread 侧）
+#
+# 集成到 RT-Thread 后，在 rtconfig.h / Kconfig 中定义：
+#   TIME_SYNC_SHARED_MEM_ADDR  共享内存虚拟地址
+#   PKG_USING_TIME_SYNC        使能本组件
+
+from building import *
+
+cwd  = GetCurrentDir()
+src  = Glob('*.c')
+path = [cwd]
+
+group = DefineGroup('TimeSync', src, depend = ['PKG_USING_TIME_SYNC'], CPPPATH = path)
+
+Return('group')

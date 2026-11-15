@@ -1,0 +1,32 @@
+; ============================================================================
+; boot_to_shell.cmm — 环境冒烟 case：启动 Linux 并确认没有 panic
+;
+; 流程：setup（加载 vmlinux + awareness）→ Go → 等待 boot → Break → 检查 PC
+;
+; pass/fail 约定（遵循 t32_python）：
+;   - 脚本正常跑完 = pass
+;   - PRINT %ERROR = fail（boot 失败，停在了 panic/die）
+;
+; 可登记进 t32_python 的 ci_testcase_seq.json，用 critical: true 作为前置。
+; ============================================================================
+
+DO ~~~~/../env/sim_armv8_setup.cmm
+
+PRINT "启动 Linux ..."
+Go
+WAIT 15.s        ; 等待 boot（SIM 上确定性 boot，时间可按需调整）
+Break
+
+; 检查是否 boot 失败（停在 panic / die）
+IF sYmbol.EXIST(panic)&&sYmbol.EXIST(die)
+(
+  IF (Register(PC)==ADDRESS.OFFSET(sYmbol.BEGIN(panic)))||(Register(PC)==ADDRESS.OFFSET(sYmbol.BEGIN(die)))
+  (
+    PRINT %ERROR "Linux boot 失败：停在了 panic/die"
+  )
+)
+
+PRINT "Linux boot OK, PC=" Register(PC)
+TASK.PS           ; 列出进程，人工确认 boot 成功
+
+ENDDO

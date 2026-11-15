@@ -1,0 +1,141 @@
+; ============================================================================
+; sim_armv8_setup.cmm — 环境准备：加载 vmlinux + 配置 awareness（不 Go）
+;
+; 裁剪自 Lauterbach 官方 demo：
+;   ~~/demo/arm/kernel/linux/board/simulator/armv8/armv8_sim_linux.cmm
+; 区别：
+;   - 去掉 DIALOG / bin.zip 解压交互（改为直接检查文件存在）
+;   - 去掉末尾的 Go 和终端等待（留给调用方决定何时运行）
+;   - 路径全部走 config.cmm 的 GLOBAL 变量
+;
+; 用法（~~~~ = 本脚本所在目录 env/，故 ../tools 定位到项目内 tools）：
+;   DO <项目根>/env/sim_armv8_setup.cmm  ; 准备到 awareness 就绪
+;   Go                                   ; 之后由调用方启动 Linux
+; ============================================================================
+
+DO ~~~~/../tools/common/config.cmm
+
+; ---- 前置检查：内核镜像必须已解压 ----
+IF !OS.FILE.EXIST("&STB_VMLINUX")
+(
+  PRINT %ERROR "vmlinux not found: &STB_VMLINUX"
+  PRINT %ERROR "请先解压 board/simulator/armv8/bin.zip"
+  ENDDO
+)
+
+; ---- 1. 复位并选择模拟器 CPU ----
+RESet
+SYStem.RESet
+WinCLEAR
+SIM.UNLOAD
+SYStem.CPU &STB_CPU_TYPE
+SETUP.IMASKASM ON            ; lock interrupts while single stepping
+SYStem.Option MMUSPACES ON   ; enable space ids to virtual addresses
+
+; ---- 2. 加载虚拟外设 DLL（定时器 / 硬件仿真） ----
+PRINT "Load a DLL for peripheral simulation"
+IF SOFTWARE.64BIT()
+(
+  IF OS.NAME()=="Linux"
+  (
+    SIM.LOAD "&STB_T32_DEMO/board/simulator/armv8/simul/libvirtual_hardware.so" 0xFF000000 3. 0.
+    SIM.LOAD "&STB_T32_DEMO/board/simulator/armv8/simul/arch_timer.so" spr:0x33e02
+  )
+  ELSE IF OS.NAME()=="Windows"
+  (
+    SIM.LOAD "&STB_T32_DEMO/board/simulator/armv8/simul/virtual_hardware.dll" 0xFF000000 3. 0.
+    SIM.LOAD "&STB_T32_DEMO/board/simulator/armv8/simul/arch_timer.dll" spr:0x33e02
+  )
+  ELSE
+  (
+    PRINT %WARNING "This demo is not supported for this host os"
+    ENDDO
+  )
+)
+ELSE
+(
+  PRINT %WARNING "This demo is not supported for 32bit software"
+  ENDDO
+)
+
+SIM.command SETARCHTIMER 100. ; simulator instructions executed per clock cycle
+
+; ---- 3. 使能 MMU/Cache 仿真并初始化调试接口 ----
+SIM.CACHE.ON
+SYStem.Up
+
+; ---- 4. 加载 Linux 镜像 ----
+PRINT "Load the Linux code"
+Data.LOAD.Elf "&STB_VMLINUX" a:0x0-0xFFFFFFC000000000 /NosYmbol
+PRINT "Load dtb"
+Data.LOAD.Binary "&STB_DTB" 0x2000
+PRINT "Load ramdisk"
+Data.LOAD.Binary "&STB_ROOTFS" 0xD0000000
+
+; ---- 5. 配置 CPU 寄存器 ----
+PRINT "Configure CPU Registers Values"
+Register.RESet
+Register.Set X0 0x2000
+Register.Set PC 0x80000           ; Set PC on start address of image
+Register.Set CPSR 0x3C5
+
+; ---- 6. 配置系统寄存器（内核启动必需，官方脚本原样保留） ----
+PRINT "Configure System Registers"
+IF CPU()=="CortexA53"
+(
+  ; cpu boot in secure mode
+  Data.Set SPR:0x36110 %Long 0x00000535                  ; SCR_EL3
+  Data.Set SPR:0x30000 %Long 0x410FD033                  ; MIDR_EL1
+  Data.Set SPR:0x33001 %Long 0x84448004                  ; CTR_EL0
+  Data.Set SPR:0x30005 %Quad 0x0000000080000000          ; MPIDR_EL1
+  Data.Set SPR:0x30006 %Long 0x000000C0                  ; REVIDR_EL1
+  Data.Set SPR:0x30014 %Long 0x10101105                  ; ID_MMFR0_EL1
+  Data.Set SPR:0x30015 %Long 0x40000000                  ; ID_MMFR1_EL1
+  Data.Set SPR:0x30016 %Long 0x01260000                  ; ID_MMFR2_EL1
+  Data.Set SPR:0x30017 %Long 0x02102211                  ; ID_MMFR3_EL1
+  Data.Set SPR:0x30026 %Quad 0x0000000000000000          ; ID_MMFR4_EL1
+  Data.Set SPR:0x30070 %Quad 0x0000000000001122          ; ID_AA64MMFR0_EL1
+  Data.Set SPR:0x30020 %Long 0x02101110                  ; ID_ISAR0_EL1
+  Data.Set SPR:0x30021 %Long 0x13112111                  ; ID_ISAR1_EL1
+  Data.Set SPR:0x30022 %Long 0x21232042                  ; ID_ISAR2_EL1
+  Data.Set SPR:0x30023 %Long 0x01112131                  ; ID_ISAR3_EL1
+  Data.Set SPR:0x30024 %Long 0x00011142                  ; ID_ISAR4_EL1
+  Data.Set SPR:0x30025 %Long 0x00011121                  ; ID_ISAR5_EL1
+  Data.Set SPR:0x30060 %Quad 0x0000000000011120          ; ID_AA64ISAR0_EL1
+  Data.Set SPR:0x30010 %Long 0x00000131                  ; ID_PFR0_EL1
+  Data.Set SPR:0x30011 %Long 0x00011011                  ; ID_PFR1_EL1
+  Data.Set SPR:0x30040 %Quad 0x0000000000002222          ; ID_AA64PFR0_EL1
+  Data.Set SPR:0x30012 %Long 0x03010066                  ; ID_DFR0_EL1
+  Data.Set SPR:0x30050 %Quad 0x0000000010305106          ; ID_AA64DFR0_EL1
+  Data.Set SPR:0x30054 %Quad 0x0000000000000000          ; ID_AA64AFR0_EL1
+  Data.Set SPR:0x339c6 %Long 0x67FFBFFF                  ; PMCEID0_EL0
+  Data.Set SPR:0x339c7 %Long 0x00000000                  ; PMCEID1_EL0
+  Data.Set SPR:0x33007 %Long 0x00000004                  ; DCZID_EL0
+  Data.Set SPR:0x33d02 %Quad 0x0000000000000000          ; TPIDR_EL0
+  Data.Set SPR:0x33d04 %Quad 0x0000800076F7C000          ; TPIDR_EL1
+  Data.Set SPR:0x34d02 %Quad 0x0804000020000008          ; TPIDR_EL2
+  Data.Set SPR:0x36d02 %Quad 0x00000000F9864480          ; TPIDR_EL3
+  Data.Set SPR:0x33d03 %Quad 0x0000000000000000          ; TPIDRRO_EL0
+  Data.Set SPR:0x33E00 %Long 0x3B9ACA0                   ; CNTFRQ_EL0
+  PER.Set.simple SPR:0x34110 %Quad 0x80000000            ; HCR_EL2 :RW: EL1 is 64 bit
+)
+
+; ---- 7. 加载内核符号 ----
+PRINT "loading Linux kernel symbols..."
+Data.LOAD.Elf "&STB_VMLINUX" /NoCODE
+
+; ---- 8. 初始化调试器 MMU 翻译 ----
+PRINT "initializing debugger MMU..."
+MMU.FORMAT LINUX swapper_pg_dir 0xFFFFFFC000000000--0xFFFFFFC0BFFFFFFF 0x0
+TRANSlation.COMMON 0xFFFFFFBFFC000000--0xFFFFFFFFFFFFFFFF  ; common area for kernel and processes
+TRANSlation.TableWalk ON                                   ; debugger uses a table walk
+TRANSlation.ON                                             ; switch on debugger address translation
+
+; ---- 9. 初始化 Linux Awareness ----
+PRINT "Initialize Linux Awareness"
+TASK.CONFIG "&STB_AWARENESS"
+
+sYmbol.SourcePATH.Set "&STB_T32_DEMO/board/simulator/armv8/ramdisk/symbols"
+
+PRINT "=== setup done: vmlinux + awareness ready, waiting for caller to Go ==="
+ENDDO

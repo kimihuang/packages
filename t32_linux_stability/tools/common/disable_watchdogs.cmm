@@ -1,0 +1,18 @@
+; ============================================================================
+; disable_watchdogs.cmm — 封装官方 disable_watchdogs
+;
+; 关闭 Linux 内核 NMI watchdog / RCU stall 检测 / softlockup / hung_task / KPTI，
+; 避免调试（单步、长断点停留）时被内核 watchdog 干扰。
+;
+; 复用官方脚本（不拷贝）：
+;   ~~/demo/arm/kernel/linux/disable_watchdogs.cmm
+;
+; 用法：
+;   DO tools/common/disable_watchdogs.cmm
+; ============================================================================
+
+DO ~~~~/config.cmm
+
+DO "&STB_T32_DEMO/disable_watchdogs.cmm"
+
+ENDDO

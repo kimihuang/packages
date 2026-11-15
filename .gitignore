@@ -12,3 +12,6 @@ Testing
 allure-report/
 allure-results/
 qemu_sample_env/labgrid/tools/
+
+# Yocto/OpenEmbedded build workspace (self-contained, has its own nested git repos)
+bitbake-builds/

@@ -1,0 +1,21 @@
+; ============================================================================
+; trap_segv.cmm — 封装官方 segv.cmm（段错误 / 异常现场调查）
+;
+; 官方 segv.cmm 的行为（两次调用）：
+;   1. 第一次调用：在 __do_user_fault / __do_kernel_fault / die / panic 设断点
+;   2. 停在 fault 处再次调用：Step.HLL + 交换寄存器，把现场复原到 fault 发生点
+;
+; 复用官方脚本（不拷贝）：
+;   ~~/demo/arm/kernel/linux/awareness/segv.cmm
+;
+; 用法：
+;   DO tools/fault/trap_segv.cmm   ; 设断点（需目标停止）
+;   Go                               ; 运行，等待 fault 命中
+;   DO tools/fault/trap_segv.cmm   ; 命中后再次调用，复原 fault 现场
+; ============================================================================
+
+DO ~~~~/../common/config.cmm
+
+DO "&STB_T32_DEMO/awareness/segv.cmm"
+
+ENDDO

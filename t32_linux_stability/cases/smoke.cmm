@@ -1,0 +1,25 @@
+; ============================================================================
+; smoke.cmm — 无 license 冒烟 case（命令数 < 50，避开 50 条脚本命令限制）
+;
+; 自包含：最小初始化 + 写内存读回校验，验证框架 pass 路径。
+; 不依赖 env/sim_armv8_setup.cmm（setup 命令数超 50，无 license 下会报 RLM Error）。
+;
+; pass/fail 约定（遵循 t32_python）：正常跑完 = pass；PRINT %ERROR = fail。
+; ============================================================================
+
+SYStem.CPU CortexA53
+SYStem.Up
+
+Data.Set D:0x20000000 %Long 0x12345678
+Data.Set D:0x20000004 %Long 0xDEADBEEF
+
+IF Data.Long(D:0x20000000)==0x12345678
+(
+    PRINT "smoke case done"
+)
+ELSE
+(
+    PRINT %ERROR "smoke verify failed: memory mismatch"
+)
+
+ENDDO
